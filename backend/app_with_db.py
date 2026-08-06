@@ -55,9 +55,11 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 
 # Configuration - Dual Architecture
-ADMIN_ASSETS_FOLDER = 'admin_assets'
-USER_UPLOADS_FOLDER = 'user_uploads'
-USER_OUTPUTS_FOLDER = 'user_outputs'
+# Use absolute paths for production deployment
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ADMIN_ASSETS_FOLDER = os.path.join(BASE_DIR, 'admin_assets')
+USER_UPLOADS_FOLDER = os.path.join(BASE_DIR, 'user_uploads')
+USER_OUTPUTS_FOLDER = os.path.join(BASE_DIR, 'user_outputs')
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'csv'}
 
 # Create folder structure
@@ -66,6 +68,11 @@ os.makedirs(os.path.join(ADMIN_ASSETS_FOLDER, 'backgrounds'), exist_ok=True)
 os.makedirs(os.path.join(ADMIN_ASSETS_FOLDER, 'badges'), exist_ok=True)
 os.makedirs(USER_UPLOADS_FOLDER, exist_ok=True)
 os.makedirs(USER_OUTPUTS_FOLDER, exist_ok=True)
+
+print(f"[STARTUP] BASE_DIR: {BASE_DIR}")
+print(f"[STARTUP] ADMIN_ASSETS_FOLDER: {ADMIN_ASSETS_FOLDER}")
+print(f"[STARTUP] Backgrounds folder: {os.path.join(ADMIN_ASSETS_FOLDER, 'backgrounds')}")
+print(f"[STARTUP] Badges folder: {os.path.join(ADMIN_ASSETS_FOLDER, 'badges')}")
 
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
@@ -300,11 +307,25 @@ def admin_preview_asset(asset_type, filename):
         elif asset_type in ['badge', 'badges']:
             filepath = os.path.join(ADMIN_ASSETS_FOLDER, 'badges', filename)
         else:
+            print(f"[PREVIEW] Invalid asset type: {asset_type}")
             return jsonify({'error': 'Invalid asset type'}), 400
 
+        print(f"[PREVIEW] Checking file: {filepath}")
+        print(f"[PREVIEW] File exists: {os.path.exists(filepath)}")
+
         if os.path.exists(filepath):
+            print(f"[PREVIEW] Sending file: {filepath}")
             return send_file(filepath)
-        return jsonify({'error': 'File not found'}), 404
+
+        # List directory contents for debugging
+        parent_dir = os.path.dirname(filepath)
+        if os.path.exists(parent_dir):
+            files = os.listdir(parent_dir)
+            print(f"[PREVIEW] Files in {parent_dir}: {files}")
+        else:
+            print(f"[PREVIEW] Directory does not exist: {parent_dir}")
+
+        return jsonify({'error': 'File not found', 'filepath': filepath}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 
