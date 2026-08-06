@@ -7,15 +7,27 @@ import io
 from werkzeug.utils import secure_filename
 from datetime import datetime
 
-# Database imports
-from database import db, Agent, Certificate, SystemAsset
-from db_services import (
-    get_agent_by_client_code, get_agent_by_id, get_all_agents,
-    create_agent, update_agent, delete_agent, search_agents,
-    import_agents_from_csv, create_certificate, get_certificates_by_agent,
-    get_recent_certificates, mark_certificate_downloaded, get_statistics,
-    create_or_update_asset, get_asset, check_system_assets_ready
-)
+# Database imports - handle both production and local paths
+try:
+    # Production (Render) - when run from project root
+    from backend.database import db, Agent, Certificate, SystemAsset
+    from backend.db_services import (
+        get_agent_by_client_code, get_agent_by_id, get_all_agents,
+        create_agent, update_agent, delete_agent, search_agents,
+        import_agents_from_csv, create_certificate, get_certificates_by_agent,
+        get_recent_certificates, mark_certificate_downloaded, get_statistics,
+        create_or_update_asset, get_asset, check_system_assets_ready
+    )
+except ImportError:
+    # Local development - when run from backend folder
+    from database import db, Agent, Certificate, SystemAsset
+    from db_services import (
+        get_agent_by_client_code, get_agent_by_id, get_all_agents,
+        create_agent, update_agent, delete_agent, search_agents,
+        import_agents_from_csv, create_certificate, get_certificates_by_agent,
+        get_recent_certificates, mark_certificate_downloaded, get_statistics,
+        create_or_update_asset, get_asset, check_system_assets_ready
+    )
 
 app = Flask(__name__)
 
