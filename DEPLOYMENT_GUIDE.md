@@ -105,7 +105,7 @@ git push -u origin main
    - **Connect repository**
    - **Configure:**
      - **Name:** `mdrt-frontend`
-     - **Build Command:** `cd frontend && npm install && npm run build`
+     - **Build Command:** `   `
      - **Publish Directory:** `frontend/build`
    - Click **"Create Static Site"**
    - Wait for build (~5-10 minutes)

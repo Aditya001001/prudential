@@ -7,59 +7,28 @@ import io
 from werkzeug.utils import secure_filename
 from datetime import datetime
 
-# Database imports - handle both production and local paths
-try:
-    # Production (Render) - when run from project root
-    from backend.database import db, Agent, Certificate, SystemAsset
-    from backend.db_services import (
-        get_agent_by_client_code, get_agent_by_id, get_all_agents,
-        create_agent, update_agent, delete_agent, search_agents,
-        import_agents_from_csv, create_certificate, get_certificates_by_agent,
-        get_recent_certificates, mark_certificate_downloaded, get_statistics,
-        create_or_update_asset, get_asset, check_system_assets_ready
-    )
-except ImportError:
-    # Local development - when run from backend folder
-    from database import db, Agent, Certificate, SystemAsset
-    from db_services import (
-        get_agent_by_client_code, get_agent_by_id, get_all_agents,
-        create_agent, update_agent, delete_agent, search_agents,
-        import_agents_from_csv, create_certificate, get_certificates_by_agent,
-        get_recent_certificates, mark_certificate_downloaded, get_statistics,
-        create_or_update_asset, get_asset, check_system_assets_ready
-    )
+# Database imports
+from database import db, Agent, Certificate, SystemAsset
+from db_services import (
+    get_agent_by_client_code, get_agent_by_id, get_all_agents,
+    create_agent, update_agent, delete_agent, search_agents,
+    import_agents_from_csv, create_certificate, get_certificates_by_agent,
+    get_recent_certificates, mark_certificate_downloaded, get_statistics,
+    create_or_update_asset, get_asset, check_system_assets_ready
+)
 
 app = Flask(__name__)
+CORS(app)
 
-# CORS configuration - allow frontend origin
-CORS(app, resources={
-    r"/api/*": {
-        "origins": [
-            "http://localhost:3000",  # Local development
-            "https://prudential-cert-gen.onrender.com",  # Production frontend
-        ],
-        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"],
-        "supports_credentials": True
-    }
-})
-
-# Database configuration - use PostgreSQL from environment or SQLite for local
-database_url = os.environ.get('DATABASE_URL', 'sqlite:///mdrt_certificates.db')
-# Render uses postgres:// but SQLAlchemy needs postgresql://
-if database_url.startswith('postgres://'):
-    database_url = database_url.replace('postgres://', 'postgresql://', 1)
-
-app.config['SQLALCHEMY_DATABASE_URI'] = database_url
+# Database configuration
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///mdrt_certificates.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 
 # Configuration - Dual Architecture
-# Use absolute paths for production deployment
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ADMIN_ASSETS_FOLDER = os.path.join(BASE_DIR, 'admin_assets')
-USER_UPLOADS_FOLDER = os.path.join(BASE_DIR, 'user_uploads')
-USER_OUTPUTS_FOLDER = os.path.join(BASE_DIR, 'user_outputs')
+ADMIN_ASSETS_FOLDER = 'admin_assets'
+USER_UPLOADS_FOLDER = 'user_uploads'
+USER_OUTPUTS_FOLDER = 'user_outputs'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'csv'}
 
 # Create folder structure
@@ -68,11 +37,6 @@ os.makedirs(os.path.join(ADMIN_ASSETS_FOLDER, 'backgrounds'), exist_ok=True)
 os.makedirs(os.path.join(ADMIN_ASSETS_FOLDER, 'badges'), exist_ok=True)
 os.makedirs(USER_UPLOADS_FOLDER, exist_ok=True)
 os.makedirs(USER_OUTPUTS_FOLDER, exist_ok=True)
-
-print(f"[STARTUP] BASE_DIR: {BASE_DIR}")
-print(f"[STARTUP] ADMIN_ASSETS_FOLDER: {ADMIN_ASSETS_FOLDER}")
-print(f"[STARTUP] Backgrounds folder: {os.path.join(ADMIN_ASSETS_FOLDER, 'backgrounds')}")
-print(f"[STARTUP] Badges folder: {os.path.join(ADMIN_ASSETS_FOLDER, 'badges')}")
 
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
@@ -307,25 +271,11 @@ def admin_preview_asset(asset_type, filename):
         elif asset_type in ['badge', 'badges']:
             filepath = os.path.join(ADMIN_ASSETS_FOLDER, 'badges', filename)
         else:
-            print(f"[PREVIEW] Invalid asset type: {asset_type}")
             return jsonify({'error': 'Invalid asset type'}), 400
 
-        print(f"[PREVIEW] Checking file: {filepath}")
-        print(f"[PREVIEW] File exists: {os.path.exists(filepath)}")
-
         if os.path.exists(filepath):
-            print(f"[PREVIEW] Sending file: {filepath}")
             return send_file(filepath)
-
-        # List directory contents for debugging
-        parent_dir = os.path.dirname(filepath)
-        if os.path.exists(parent_dir):
-            files = os.listdir(parent_dir)
-            print(f"[PREVIEW] Files in {parent_dir}: {files}")
-        else:
-            print(f"[PREVIEW] Directory does not exist: {parent_dir}")
-
-        return jsonify({'error': 'File not found', 'filepath': filepath}), 404
+        return jsonify({'error': 'File not found'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 

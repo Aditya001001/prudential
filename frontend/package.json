@@ -2,7 +2,6 @@
   "name": "mdrt-certificate-generator",
   "version": "1.0.0",
   "private": true,
-  "homepage": ".",
   "dependencies": {
     "axios": "^1.6.0",
     "lucide-react": "^0.294.0",

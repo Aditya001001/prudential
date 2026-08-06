@@ -1,152 +1,92 @@
-# Python
+﻿# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-env/
-venv/
-ENV/
-*.egg-info/
-dist/
-build/
-instance/
-
-# Database
 *.db
 *.sqlite
-*.sqlite3
+*.log
+instance/
+.env
+venv/
+env/
+ENV/
 
-# Backend - User uploads and generated certificates (sensitive data)
-backend/admin_assets/backgrounds/*.png
-backend/admin_assets/backgrounds/*.jpg
-backend/admin_assets/badges/*.png
-backend/admin_assets/badges/*.jpg
-backend/admin_assets/data.csv
-backend/user_uploads/*
-backend/user_outputs/*
-backend/uploads/
-backend/outputs/
-
-# Keep folder structure
-!backend/admin_assets/backgrounds/.gitkeep
-!backend/admin_assets/badges/.gitkeep
-!backend/user_uploads/.gitkeep
-!backend/user_outputs/.gitkeep
-
-# Node
+# Node / React
 node_modules/
+frontend/build/
+frontend/.env
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-frontend/build/
-frontend/.pnpm-store/
-frontend/.env.local
-frontend/.env.development.local
-frontend/.env.test.local
-frontend/.env.production.local
 
-# IDE
-.vscode/
-.idea/
+# User uploads and outputs
+backend/user_uploads/*
+backend/user_outputs/*
+backend/uploads/*
+backend/outputs/*
+backend/admin_assets/backgrounds/*
+backend/admin_assets/badges/*
+backend/admin_assets/*.csv
+
+# Keep folder structure
+!backend/user_uploads/.gitkeep
+!backend/user_outputs/.gitkeep
+!backend/admin_assets/backgrounds/.gitkeep
+!backend/admin_assets/badges/.gitkeep
+
+# Test files
+test_*.py
+test_*.png
+test_*.jpg
+test_*.jpeg
+test_output/
+verify_*.py
+
+# Backup files
+*_backup.py
+*_old*.py
+*.backup
+*-original.js
+*-test.js
+
+# OS files
+.DS_Store
+Thumbs.db
 *.swp
 *.swo
 *~
 
-# OS
-.DS_Store
-Thumbs.db
-desktop.ini
-Desktop.ini
+# IDE
+.vscode/
+.idea/
+*.code-workspace
 
-# Logs
-*.log
-*.tmp
-*.temp
-
-# Environment variables
-.env
-.env.local
-
-# Test files and outputs
-test_*.py
-*_test.py
-test_*.png
-test_*.txt
-test_output/
-test_result.txt
-verify_config.py
-verify_db_config.py
-
-# Sample/demo files
-*.jpeg
-*.jpg
-00*.jpeg
-00*.jpg
-WhatsApp*.jpeg
-Sample*.csv
-sample*.csv
-
-# Zip files
-*.zip
-
-# Backup files
-*_backup.py
-*_old.py
-*_old_backup.py
-*-original.js
-*-test.js
-*.backup
-
-# Batch scripts (local dev only)
+# Batch/Shell scripts
 *.bat
 *.ps1
 
-# Documentation markdown (keep only essential ones)
-URGENT_*.md
-FIX_*.md
-COMPLETE_*.md
-FINAL_*.md
-SPEED_*.md
-PERFORMANCE_*.md
-BUTTON_*.md
-UI_CLEANUP*.md
-BALANCED_*.md
-ALL_*.md
-CHANGES_*.md
-CLIENT_*.md
-DATABASE_SETUP*.md
-DUAL_*.md
-FIXED_*.md
-FULL_*.md
-IMAGE_*.md
-INSTALLATION_*.md
-MANUAL_*.md
-MIGRATE_*.md
-NEON_*.md
-POSTER_*.md
-PREVIEW_*.md
-QUICK_*.md
-REACT_*.md
-SETUP_*.md
-START_*.md
-TEMPLATE_*.md
-TEST_*.md
-UPDATE_*.md
-HOW_*.txt
-console.txt
-category.txt
-
-# Font files (not needed in repo)
+# Fonts and archives
+*.zip
 cookie-crisp-font/
 
-# RGB logos folder
-RGB*/
-
-# Poster folders
-20260730*/
-
-# Blank images
-Blank-*.png
-blank-*.jpg
+# Sample images and data
+00*.jpeg
+00*.jpg
+*.jpeg
+*.jpg
+blank-white.jpg
 solid-color-image.png
+d.jpeg
+
+# Text files
+HOW_TO_START.txt
+console.txt
+category.txt
+test_result.txt
+
+# Sample data folders
+20*/
+RGB*/
+Sample*.csv

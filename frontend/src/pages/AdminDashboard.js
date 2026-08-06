@@ -4,7 +4,7 @@ import { CheckCircle, XCircle, Image as ImageIcon, FileText, AlertCircle, Eye, S
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import './AdminDashboard.css';
 
-const API_URL = 'https://prudential-certificate.onrender.com/api';
+const API_URL = 'http://localhost:5000/api';
 
 function AdminDashboard() {
   const [assetStatus, setAssetStatus] = useState(null);

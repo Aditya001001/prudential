@@ -4,7 +4,7 @@ import { Upload, CheckCircle, XCircle, AlertCircle, Download, User, Award, Eye, 
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import './UserPortal.css';
 
-const API_URL = 'https://prudential-certificate.onrender.com/api';
+const API_URL = 'http://localhost:5000/api';
 
 function UserPortal() {
   const [systemReady, setSystemReady] = useState(false);
