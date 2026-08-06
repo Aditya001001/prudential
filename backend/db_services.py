@@ -1,7 +1,12 @@
 """
 Database service layer - handles all database operations
 """
-from database import db, Agent, Certificate, SystemAsset
+# Handle both production and local imports
+try:
+    from backend.database import db, Agent, Certificate, SystemAsset
+except ImportError:
+    from database import db, Agent, Certificate, SystemAsset
+
 from datetime import datetime
 import pandas as pd
 
