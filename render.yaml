@@ -23,7 +23,7 @@ services:
   # Frontend (Static Site)
   - type: web
     name: mdrt-frontend
-    runtime: node
+    runtime: static
     buildCommand: cd frontend && npm install && npm run build
     staticPublishPath: frontend/build
     routes:
