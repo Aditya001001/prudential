@@ -7,15 +7,27 @@ import io
 from werkzeug.utils import secure_filename
 from datetime import datetime
 
-# Database imports
-from database import db, Agent, Certificate, SystemAsset
-from db_services import (
-    get_agent_by_client_code, get_agent_by_id, get_all_agents,
-    create_agent, update_agent, delete_agent, search_agents,
-    import_agents_from_csv, create_certificate, get_certificates_by_agent,
-    get_recent_certificates, mark_certificate_downloaded, get_statistics,
-    create_or_update_asset, get_asset, check_system_assets_ready
-)
+# Database imports - handle both production and local paths
+try:
+    # Production (Render) - when run from project root
+    from backend.database import db, Agent, Certificate, SystemAsset
+    from backend.db_services import (
+        get_agent_by_client_code, get_agent_by_id, get_all_agents,
+        create_agent, update_agent, delete_agent, search_agents,
+        import_agents_from_csv, create_certificate, get_certificates_by_agent,
+        get_recent_certificates, mark_certificate_downloaded, get_statistics,
+        create_or_update_asset, get_asset, check_system_assets_ready
+    )
+except ImportError:
+    # Local development - when run from backend folder
+    from database import db, Agent, Certificate, SystemAsset
+    from db_services import (
+        get_agent_by_client_code, get_agent_by_id, get_all_agents,
+        create_agent, update_agent, delete_agent, search_agents,
+        import_agents_from_csv, create_certificate, get_certificates_by_agent,
+        get_recent_certificates, mark_certificate_downloaded, get_statistics,
+        create_or_update_asset, get_asset, check_system_assets_ready
+    )
 
 app = Flask(__name__)
 CORS(app)
@@ -40,34 +52,16 @@ os.makedirs(USER_OUTPUTS_FOLDER, exist_ok=True)
 
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
-# ============================================
-# FAST + QUALITY: 1873x3334 (2x larger than 899x1600)
-# Good balance: Better quality, still fast processing
-# ============================================
-TEMPLATE_WIDTH = 1873
-TEMPLATE_HEIGHT = 3334
+# Fixed positions for 899x1600px poster templates (from 20260714 Poster Report)
+# Template size: 899 x 1600 pixels
+# Scaling factor from 494x740: width ~1.82x, height ~2.16x
+TEMPLATE_WIDTH = 899
+TEMPLATE_HEIGHT = 1600
 
 FIXED_POSITIONS = {
-    'agent_photo': {
-        'x': 937,           # Center (1873 / 2)
-        'y': 1400,          # 42% from top
-        'max_width': 937,   # 50% of width
-        'max_height': 1867  # 56% of height
-    },
-    'name_text': {
-        'x': 937,           # Center
-        'y': 2901,          # 87% from top
-        'font_size': 121,   # Scaled from 58px (58 * 2.08)
-        'color': '#FFFFFF',
-        'glow_intensity': 30,    # Scaled from 14px
-        'outline_width': 8       # Scaled from 4px
-    },
-    'badges': {
-        'x': 135,           # 7.2% from left
-        'y': 1334,          # 40% from top
-        'spacing': 227,     # Scaled from 109px
-        'size': 189         # Scaled from 91px
-    }
+    'agent_photo': {'x': 449, 'y': 691, 'max_width': 455, 'max_height': 756},  # Scaled proportionally
+    'name_text': {'x': 449, 'y': 1339, 'font_size': 58, 'color': '#FFFFFF', 'glow_intensity': 14, 'outline_width': 4},  # Scaled
+    'badges': {'x': 55, 'y': 540, 'spacing': 109, 'size': 91}  # Scaled proportionally
 }
 
 # Neon colors by tier
@@ -113,40 +107,9 @@ def get_admin_asset_status():
     return status
 
 def remove_background(image_path):
-    """Remove background using AGGRESSIVE speed optimization - processes at 600px max"""
-    import time
-    start = time.time()
-
+    """Remove background from image"""
     with Image.open(image_path) as img:
-        original_size = img.size
-
-        # VERY AGGRESSIVE: 600px max for FAST processing (10-15x speedup!)
-        max_dimension = 600
-
-        if max(original_size) > max_dimension:
-            # Downscale for speed
-            ratio = max_dimension / max(original_size)
-            thumbnail_size = (int(original_size[0] * ratio), int(original_size[1] * ratio))
-
-            print(f"[SPEED] Downscaling {original_size} → {thumbnail_size} for AI processing...")
-
-            # Process small version
-            img_small = img.copy()
-            img_small.thumbnail(thumbnail_size, Image.Resampling.LANCZOS)
-
-            print(f"[SPEED] Running AI background removal on {thumbnail_size}...")
-            no_bg_small = remove(img_small)
-
-            print(f"[SPEED] Upscaling result back to {original_size}...")
-            # Upscale back
-            no_bg = no_bg_small.resize(original_size, Image.Resampling.LANCZOS)
-        else:
-            print(f"[SPEED] Image small ({original_size}), processing normally...")
-            no_bg = remove(img)
-
-        elapsed = time.time() - start
-        print(f"[SPEED] Background removal completed in {elapsed:.2f}s")
-
+        no_bg = remove(img)
         return no_bg.convert("RGBA")
 
 def draw_neon_text(draw_obj, text, position, font, tier):
@@ -166,11 +129,10 @@ def draw_neon_text(draw_obj, text, position, font, tier):
     text_y = y
     
     # Draw glow layers (outer to inner, fading alpha)
-    # Optimized: step by 2 for faster rendering
-    for radius in range(glow_size, 0, -2):  # Step by 2 instead of 1 for speed
+    for radius in range(glow_size, 0, -1):
         glow_alpha = int(100 * (1 - radius/glow_size))
-        for offset_x in range(-radius, radius+1, 2):  # Step by 2
-            for offset_y in range(-radius, radius+1, 2):  # Step by 2
+        for offset_x in range(-radius, radius+1):
+            for offset_y in range(-radius, radius+1):
                 if offset_x*offset_x + offset_y*offset_y <= radius*radius:
                     draw_obj.text(
                         (text_x + offset_x, text_y + offset_y),
