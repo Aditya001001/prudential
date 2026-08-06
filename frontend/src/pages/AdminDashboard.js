@@ -369,7 +369,7 @@ function BackgroundsUploader({ onUpload, uploading, error, success, status, onPr
             {status?.[tier.label.toUpperCase()] && (
               <div className="preview-container">
                 <img
-                  src={`http://localhost:5000/api/admin/preview-asset/background/${tier.label.toUpperCase()}.png`}
+                  src={`${API_URL}/admin/preview-asset/background/${tier.label.toUpperCase()}.png`}
                   alt={`${tier.label} preview`}
                   className="mini-preview"
                 />
@@ -426,7 +426,7 @@ function BadgesUploader({ onUpload, uploading, error, success, status, onPreview
             {status?.[badge.label] && (
               <div className="preview-container">
                 <img
-                  src={`http://localhost:5000/api/admin/preview-asset/badge/${badge.label}.png`}
+                  src={`${API_URL}/admin/preview-asset/badge/${badge.label}.png`}
                   alt={`${badge.fullName} preview`}
                   className="mini-preview"
                 />
