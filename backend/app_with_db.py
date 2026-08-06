@@ -7,33 +7,38 @@ import io
 from werkzeug.utils import secure_filename
 from datetime import datetime
 
-# Database imports - handle both production and local paths
-try:
-    # Production (Render) - when run from project root
-    from backend.database import db, Agent, Certificate, SystemAsset
-    from backend.db_services import (
-        get_agent_by_client_code, get_agent_by_id, get_all_agents,
-        create_agent, update_agent, delete_agent, search_agents,
-        import_agents_from_csv, create_certificate, get_certificates_by_agent,
-        get_recent_certificates, mark_certificate_downloaded, get_statistics,
-        create_or_update_asset, get_asset, check_system_assets_ready
-    )
-except ImportError:
-    # Local development - when run from backend folder
-    from database import db, Agent, Certificate, SystemAsset
-    from db_services import (
-        get_agent_by_client_code, get_agent_by_id, get_all_agents,
-        create_agent, update_agent, delete_agent, search_agents,
-        import_agents_from_csv, create_certificate, get_certificates_by_agent,
-        get_recent_certificates, mark_certificate_downloaded, get_statistics,
-        create_or_update_asset, get_asset, check_system_assets_ready
-    )
+# Database imports
+from database import db, Agent, Certificate, SystemAsset
+from db_services import (
+    get_agent_by_client_code, get_agent_by_id, get_all_agents,
+    create_agent, update_agent, delete_agent, search_agents,
+    import_agents_from_csv, create_certificate, get_certificates_by_agent,
+    get_recent_certificates, mark_certificate_downloaded, get_statistics,
+    create_or_update_asset, get_asset, check_system_assets_ready
+)
 
 app = Flask(__name__)
-CORS(app)
 
-# Database configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///mdrt_certificates.db'
+# CORS configuration - allow frontend origin
+CORS(app, resources={
+    r"/api/*": {
+        "origins": [
+            "http://localhost:3000",  # Local development
+            "https://prudential-cert-gen.onrender.com",  # Production frontend
+        ],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": True
+    }
+})
+
+# Database configuration - use PostgreSQL from environment or SQLite for local
+database_url = os.environ.get('DATABASE_URL', 'sqlite:///mdrt_certificates.db')
+# Render uses postgres:// but SQLAlchemy needs postgresql://
+if database_url.startswith('postgres://'):
+    database_url = database_url.replace('postgres://', 'postgresql://', 1)
+
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 
