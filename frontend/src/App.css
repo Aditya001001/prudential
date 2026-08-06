@@ -1,0 +1,272 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.app {
+  position: relative;
+  min-height: 100vh;
+}
+
+.nav-bar {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  display: flex;
+  gap: 0.5rem;
+  background: white;
+  padding: 0.5rem;
+  border-radius: 50px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  z-index: 1000;
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem;
+  border-radius: 50px;
+  text-decoration: none;
+  color: #4a5568;
+  font-weight: 600;
+  transition: all 0.3s;
+  font-size: 0.9rem;
+}
+
+.nav-link:hover {
+  background: #f7fafc;
+  color: #667eea;
+}
+
+.nav-link.active {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.nav-button {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.nav-button:hover {
+  background: #f7fafc;
+  color: #667eea;
+}
+
+.logout-btn:hover {
+  background: #fee;
+  color: #c53030;
+}
+
+/* History Modal */
+.history-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 2rem;
+}
+
+.history-modal {
+  background: white;
+  border-radius: 12px;
+  max-width: 1000px;
+  width: 100%;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.5rem 2rem;
+  border-bottom: 2px solid #e2e8f0;
+}
+
+.history-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0;
+  color: #2d3748;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #718096;
+  padding: 0.5rem;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.close-btn:hover {
+  background: #f7fafc;
+  color: #2d3748;
+}
+
+.history-content {
+  padding: 2rem;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.no-history {
+  text-align: center;
+  padding: 4rem 2rem;
+  color: #a0aec0;
+}
+
+.no-history svg {
+  margin-bottom: 1rem;
+}
+
+.history-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1.5rem;
+}
+
+.history-card {
+  background: #f7fafc;
+  border: 2px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 1.5rem;
+  transition: all 0.3s ease;
+}
+
+.history-card:hover {
+  border-color: #667eea;
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.1);
+  transform: translateY(-2px);
+}
+
+.history-info h3 {
+  margin: 0 0 0.5rem 0;
+  color: #2d3748;
+  font-size: 1.1rem;
+}
+
+.client-code {
+  color: #718096;
+  font-size: 0.9rem;
+  margin: 0.25rem 0;
+}
+
+.tier-badge {
+  display: inline-block;
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: white;
+  padding: 0.25rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0.5rem 0;
+}
+
+.badges-list {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+
+.badges-list .badge {
+  background: #48bb78;
+  color: white;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.generated-date {
+  font-size: 0.85rem;
+  color: #a0aec0;
+  margin: 0.75rem 0 0 0;
+}
+
+.history-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  flex-wrap: wrap;
+}
+
+.btn-view,
+.btn-download,
+.btn-delete {
+  flex: 1;
+  min-width: 80px;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-decoration: none;
+}
+
+.btn-view {
+  background: white;
+  color: #667eea;
+  border: 2px solid #667eea;
+}
+
+.btn-view:hover {
+  background: #667eea;
+  color: white;
+}
+
+.btn-download {
+  background: #48bb78;
+  color: white;
+  border: 2px solid #48bb78;
+}
+
+.btn-download:hover {
+  background: #38a169;
+  border-color: #38a169;
+}
+
+.btn-delete {
+  background: white;
+  color: #e53e3e;
+  border: 2px solid #e53e3e;
+}
+
+.btn-delete:hover {
+  background: #e53e3e;
+  color: white;
+}
+
+.btn-delete:active {
+  transform: scale(0.95);
+}
