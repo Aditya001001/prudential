@@ -148,11 +148,16 @@ def import_agents_from_csv(csv_path):
 # ============= CERTIFICATE SERVICES =============
 
 def create_certificate(agent_id, filename, filepath, file_size=None, generated_by=None):
-    """Create a certificate record"""
+    """Create a certificate record (keeps all generations as history)"""
     agent = get_agent_by_id(agent_id)
     if not agent:
         return None
 
+    # Count existing certificates for this agent
+    existing_count = Certificate.query.filter_by(agent_id=agent_id).count()
+    print(f"[CERTIFICATE] Agent {agent_id} has {existing_count} existing certificate(s)")
+
+    # Create new certificate record (keeping all previous generations)
     certificate = Certificate(
         agent_id=agent_id,
         filename=filename,
@@ -165,6 +170,8 @@ def create_certificate(agent_id, filename, filepath, file_size=None, generated_b
     )
     db.session.add(certificate)
     db.session.commit()
+
+    print(f"[CERTIFICATE] Created new certificate: {filename} (Total for agent: {existing_count + 1})")
     return certificate
 
 

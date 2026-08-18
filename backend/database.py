@@ -66,24 +66,29 @@ class Agent(db.Model):
 class Certificate(db.Model):
     """Generated certificates - tracking and history"""
     __tablename__ = 'certificates'
-    
+
     id = db.Column(db.Integer, primary_key=True)
     agent_id = db.Column(db.Integer, db.ForeignKey('agents.id'), nullable=False)
-    
+
     # File information
     filename = db.Column(db.String(255), nullable=False)
     filepath = db.Column(db.String(500), nullable=False)
     file_size = db.Column(db.Integer)  # in bytes
-    
+
+    # Original uploaded photo information
+    original_photo_filename = db.Column(db.String(255), nullable=True)
+    original_photo_filepath = db.Column(db.String(500), nullable=True)
+    original_photo_size = db.Column(db.Integer, nullable=True)  # in bytes
+
     # Generation metadata
     generated_at = db.Column(db.DateTime, default=datetime.utcnow)
     generated_by = db.Column(db.String(100))  # Optional: track who generated it
-    
+
     # Certificate details (snapshot at generation time)
     agent_name_snapshot = db.Column(db.String(200))
     tier_snapshot = db.Column(db.String(10))
     badges_snapshot = db.Column(db.String(50))  # e.g., "LM,HR,QC"
-    
+
     # Status
     is_downloaded = db.Column(db.Boolean, default=False)
     download_count = db.Column(db.Integer, default=0)
@@ -103,6 +108,8 @@ class Certificate(db.Model):
             'filename': self.filename,
             'filepath': self.filepath,
             'file_size': self.file_size,
+            'original_photo_filename': self.original_photo_filename,
+            'has_original_photo': self.original_photo_filename is not None,
             'generated_at': self.generated_at.isoformat() if self.generated_at else None,
             'generated_by': self.generated_by,
             'agent_name': self.agent_name_snapshot,

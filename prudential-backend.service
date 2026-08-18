@@ -1,0 +1,17 @@
+[Unit]
+Description=Prudential MDRT Certificate Generator Backend
+After=network.target
+
+[Service]
+Type=simple
+User=aditya.developer
+WorkingDirectory=/home/aditya.developer/prudential/backend
+Environment="PATH=/home/aditya.developer/prudential/venv/bin:/usr/bin:/bin"
+ExecStart=/home/aditya.developer/prudential/venv/bin/python3 /home/aditya.developer/prudential/backend/app_with_db.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/aditya.developer/prudential/backend/app.log
+StandardError=append:/home/aditya.developer/prudential/backend/app.log
+
+[Install]
+WantedBy=multi-user.target

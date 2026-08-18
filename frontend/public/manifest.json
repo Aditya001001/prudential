@@ -1,0 +1,33 @@
+{
+  "short_name": "MDRT Cert",
+  "name": "Prudential MDRT Certificate Generator",
+  "description": "Generate your MDRT achievement certificates",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "16x16",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "favicon-32x32.png",
+      "type": "image/png",
+      "sizes": "32x32"
+    },
+    {
+      "src": "favicon-192x192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "favicon-512x512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "start_url": "/prudential/",
+  "display": "standalone",
+  "theme_color": "#ef4444",
+  "background_color": "#fce7f3",
+  "orientation": "portrait"
+}

@@ -1,21 +1,19 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { CheckCircle, XCircle, Image as ImageIcon, FileText, AlertCircle, Eye, Shield, Trash2, AlertTriangle } from 'lucide-react';
-import ImagePreviewModal from '../components/ImagePreviewModal';
+import { Upload, Eye, LogOut, Bell, User as UserIcon, History } from 'lucide-react';
 import './AdminDashboard.css';
 
-const API_URL = 'http://localhost:5000/api';
+const API_URL = '/prudential-api';
 
 function AdminDashboard() {
+  const navigate = useNavigate();
   const [assetStatus, setAssetStatus] = useState(null);
   const [uploading, setUploading] = useState({});
-  const [errors, setErrors] = useState({});
-  const [successMessages, setSuccessMessages] = useState({});
-  const [previewModal, setPreviewModal] = useState(null);
-  const [csvPreview, setCsvPreview] = useState(null);
+  const [previewImage, setPreviewImage] = useState(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
-  const [resetting, setResetting] = useState(false);
-
+  const [selectedCSVFile, setSelectedCSVFile] = useState(null);
+  const [imageTimestamp, setImageTimestamp] = useState(Date.now());
 
   useEffect(() => {
     fetchAssetStatus();
@@ -25,501 +23,528 @@ function AdminDashboard() {
     try {
       const response = await axios.get(`${API_URL}/admin/status`);
       setAssetStatus(response.data);
-      if (response.data.csv_info) {
-        setCsvPreview(response.data.csv_info);
-      }
     } catch (error) {
       console.error('Failed to fetch asset status:', error);
     }
   };
 
-  const handleUploadBackgrounds = async (files) => {
-    setUploading(prev => ({ ...prev, backgrounds: true }));
-    setErrors(prev => ({ ...prev, backgrounds: null }));
-    setSuccessMessages(prev => ({ ...prev, backgrounds: null }));
+  const handleLogout = () => {
+    localStorage.removeItem('adminAuth');
+    localStorage.removeItem('adminUsername');
+    navigate('/admin/login');
+  };
 
+  const handleBackgroundUpload = async (tier, file) => {
     const formData = new FormData();
-    if (files.mdrt) formData.append('MDRT', files.mdrt);
-    if (files.cot) formData.append('COT', files.cot);
-    if (files.tot) formData.append('TOT', files.tot);
+    formData.append(tier, file);
 
+    setUploading(prev => ({ ...prev, [tier]: true }));
     try {
-      const response = await axios.post(`${API_URL}/admin/upload-backgrounds`, formData);
-      if (response.data.success) {
-        setSuccessMessages(prev => ({ ...prev, backgrounds: 'Backgrounds uploaded successfully!' }));
-        fetchAssetStatus();
-      }
+      await axios.post(`${API_URL}/admin/upload-backgrounds`, formData);
+      setImageTimestamp(Date.now()); // Force image refresh only after upload
+      await fetchAssetStatus();
     } catch (error) {
-      setErrors(prev => ({ ...prev, backgrounds: error.response?.data?.error || 'Upload failed' }));
+      console.error('Upload failed:', error);
     } finally {
-      setUploading(prev => ({ ...prev, backgrounds: false }));
+      setUploading(prev => ({ ...prev, [tier]: false }));
     }
   };
 
-  const handleUploadBadges = async (files) => {
-    setUploading(prev => ({ ...prev, badges: true }));
-    setErrors(prev => ({ ...prev, badges: null }));
-    setSuccessMessages(prev => ({ ...prev, badges: null }));
-
+  const handleBadgeUpload = async (badgeType, file) => {
     const formData = new FormData();
-    if (files.lm) formData.append('LM', files.lm);
-    if (files.hr) formData.append('HR', files.hr);
-    if (files.qc) formData.append('QC', files.qc);
+    formData.append(badgeType, file);
 
+    setUploading(prev => ({ ...prev, [badgeType]: true }));
     try {
-      const response = await axios.post(`${API_URL}/admin/upload-badges`, formData);
-      if (response.data.success) {
-        setSuccessMessages(prev => ({ ...prev, badges: 'Badges uploaded successfully!' }));
-        fetchAssetStatus();
-      }
+      await axios.post(`${API_URL}/admin/upload-badges`, formData);
+      setImageTimestamp(Date.now()); // Force image refresh only after upload
+      await fetchAssetStatus();
     } catch (error) {
-      setErrors(prev => ({ ...prev, badges: error.response?.data?.error || 'Upload failed' }));
+      console.error('Upload failed:', error);
     } finally {
-      setUploading(prev => ({ ...prev, badges: false }));
+      setUploading(prev => ({ ...prev, [badgeType]: false }));
     }
   };
 
-  const handleUploadCSV = async (file) => {
-    setUploading(prev => ({ ...prev, csv: true }));
-    setErrors(prev => ({ ...prev, csv: null }));
-    setSuccessMessages(prev => ({ ...prev, csv: null }));
+  const handleNametagUpload = async (tier, file) => {
+    const formData = new FormData();
+    formData.append(tier, file);
 
+    setUploading(prev => ({ ...prev, [tier + '_nametag']: true }));
+    try {
+      await axios.post(`${API_URL}/admin/upload-nametags`, formData);
+      setImageTimestamp(Date.now()); // Force image refresh only after upload
+      await fetchAssetStatus();
+    } catch (error) {
+      console.error('Upload failed:', error);
+    } finally {
+      setUploading(prev => ({ ...prev, [tier + '_nametag']: false }));
+    }
+  };
+
+  const handleCSVUpload = async (file) => {
     const formData = new FormData();
     formData.append('csv', file);
 
+    setUploading(prev => ({ ...prev, csv: true }));
     try {
       const response = await axios.post(`${API_URL}/admin/upload-csv`, formData);
-      if (response.data.success) {
-        setSuccessMessages(prev => ({ ...prev, csv: `CSV uploaded! ${response.data.total_agents} agents loaded.` }));
-        setCsvPreview({
-          total_agents: response.data.total_agents,
-          preview: response.data.preview,
-          filename: response.data.filename
-        });
-        fetchAssetStatus();
-      }
+      fetchAssetStatus();
+      // CSV uploaded successfully
     } catch (error) {
-      setErrors(prev => ({ ...prev, csv: error.response?.data?.error || 'Upload failed' }));
+      console.error('Upload failed:', error);
     } finally {
       setUploading(prev => ({ ...prev, csv: false }));
     }
   };
 
   const handleDeleteCSV = async () => {
-    if (!window.confirm('Delete the CSV file and all agent data?\n\nThis will remove all agents from the database. Generated certificates will be preserved.')) {
-      return;
-    }
-
     try {
-      const response = await axios.delete(`${API_URL}/admin/delete-csv`);
-      if (response.data.success) {
-        setSuccessMessages(prev => ({ ...prev, csv: 'CSV file deleted successfully!' }));
-        setCsvPreview(null);
-        fetchAssetStatus();
-      }
+      await axios.delete(`${API_URL}/admin/delete-csv`);
+      fetchAssetStatus();
+      // CSV deleted successfully
     } catch (error) {
-      setErrors(prev => ({ ...prev, csv: error.response?.data?.error || 'Delete failed' }));
+      console.error('Delete failed:', error);
     }
-  };
-
-  const openPreview = (assetType, filename, label) => {
-    setPreviewModal({
-      url: `${API_URL}/admin/preview-asset/${assetType}/${filename}`,
-      name: label
-    });
   };
 
   const handleResetDatabase = async () => {
-    setResetting(true);
-    setErrors(prev => ({ ...prev, reset: null }));
-    setSuccessMessages(prev => ({ ...prev, reset: null }));
-
     try {
-      const response = await axios.post(`${API_URL}/admin/reset-database`);
-      if (response.data.success) {
-        setSuccessMessages(prev => ({ ...prev, reset: 'Admin assets reset successfully!' }));
-        setCsvPreview(null);
-        fetchAssetStatus();
-        setShowResetConfirm(false);
-
-        setTimeout(() => {
-          setSuccessMessages(prev => ({ ...prev, reset: null }));
-        }, 5000);
-      }
+      await axios.post(`${API_URL}/admin/reset-database`);
+      setImageTimestamp(Date.now()); // Force image refresh after reset
+      await fetchAssetStatus();
+      setShowResetConfirm(false);
+      // Database reset successfully
     } catch (error) {
-      setErrors(prev => ({ ...prev, reset: error.response?.data?.error || 'Reset failed' }));
-    } finally {
-      setResetting(false);
+      console.error('Reset failed:', error);
     }
   };
 
+  const FileUploadBox = ({ title, currentFile, onUpload, isUploading, assetType, filename }) => {
+    const handleFileSelect = (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        onUpload(file);
+      }
+    };
 
+    const previewUrl = currentFile ? `${API_URL}/admin/preview-asset/${assetType}/${filename}?t=${imageTimestamp}` : null;
+    const buttonText = isUploading ? 'Uploading...' : (currentFile ? 'Change File' : 'Upload File');
 
-  return (
-    <div className="admin-dashboard">
-      <div className="admin-header">
-        <div className="header-content">
-          <Shield size={40} className="header-icon" />
-          <div>
-            <h1>Admin Dashboard</h1>
-            <p>Manage Master Assets for MDRT Certificate Generator</p>
+    const handlePreviewClick = () => {
+      if (previewUrl) {
+        setPreviewImage({ url: previewUrl, title });
+      }
+    };
+
+    return (
+      <div className={`upload-box-new ${currentFile ? 'has-file' : ''}`}>
+        <h3 className="upload-box-title-new">{title}</h3>
+        <div className="upload-box-content">
+          <div className="upload-area-new">
+            <input
+              type="file"
+              accept="image/png,image/jpeg"
+              onChange={handleFileSelect}
+              id={`upload-${assetType}-${filename}`}
+              style={{ display: 'none' }}
+            />
+            <label htmlFor={`upload-${assetType}-${filename}`} className="upload-label-new">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+              </svg>
+              <span>{buttonText}</span>
+            </label>
           </div>
-        </div>
-      </div>
-
-      <div className="admin-content">
-        <div className="status-overview">
-          <h2><AlertCircle size={24} /> System Status</h2>
-          {assetStatus && (
-            <div className="status-grid">
-              <StatusCard 
-                title="Backgrounds" 
-                items={assetStatus.backgrounds}
-                icon={<ImageIcon size={20} />}
-              />
-              <StatusCard 
-                title="Badges" 
-                items={assetStatus.badges}
-                icon={<ImageIcon size={20} />}
-              />
-              <StatusCard 
-                title="Master CSV" 
-                items={{ 'Data File': assetStatus.csv }}
-                icon={<FileText size={20} />}
-                extra={assetStatus.csv_info ? `${assetStatus.csv_info.total_agents} agents` : null}
-              />
+          {previewUrl && (
+            <div className="mini-preview" onClick={handlePreviewClick} title="Click to view full size">
+              <img src={previewUrl} alt={title} />
+              <div className="preview-overlay">
+                <Eye size={20} />
+              </div>
             </div>
           )}
         </div>
+      </div>
+    );
+  };
 
-        {/* Master CSV Data Section - Right below System Status */}
-        <CSVUploader
-          onUpload={handleUploadCSV}
-          onDelete={handleDeleteCSV}
-          uploading={uploading.csv}
-          error={errors.csv}
-          success={successMessages.csv}
-          csvPreview={csvPreview}
-          hasCSV={assetStatus?.csv}
-        />
+  return (
+    <div className="new-admin-container">
+      {/* Sidebar */}
+      <div className="admin-sidebar">
+        <div className="sidebar-logo">
+          <img src="/prudential/PRU_logo_white_RGB_v1%201.png" alt="Prudential" />
+        </div>
+        
+        <nav className="sidebar-nav">
+          <a href="/prudential/" className="nav-item">
+            <UserIcon size={20} />
+            <span>User Portal</span>
+          </a>
+          <a href="/prudential/admin" className="nav-item active">
+            <Upload size={20} />
+            <span>Admin Dashboard</span>
+          </a>
+          <a href="/prudential/history" className="nav-item">
+            <History size={20} />
+            <span>Certificate History</span>
+          </a>
+        </nav>
 
-        <BackgroundsUploader
-          onUpload={handleUploadBackgrounds}
-          uploading={uploading.backgrounds}
-          error={errors.backgrounds}
-          success={successMessages.backgrounds}
-          status={assetStatus?.backgrounds}
-          onPreview={openPreview}
-        />
+        <button className="logout-button" onClick={handleLogout}>
+          <LogOut size={18} />
+          <span>Logout</span>
+        </button>
+      </div>
 
-        <BadgesUploader
-          onUpload={handleUploadBadges}
-          uploading={uploading.badges}
-          error={errors.badges}
-          success={successMessages.badges}
-          status={assetStatus?.badges}
-          onPreview={openPreview}
-        />
-
-        {/* Reset Database Section */}
-        <div className="reset-section">
-          <div className="reset-header">
-            <Trash2 size={24} />
-            <h2>Reset Database</h2>
+      {/* Main Content */}
+      <div className="admin-main">
+        <div className="admin-header-bar">
+          <div>
+            <h1 className="page-title">Admin Dashboard</h1>
+            <p className="page-subtitle">Manage Master Assets For MDRT Certificate Generator</p>
           </div>
-          <p className="section-desc">Clear all admin assets and agent data. Generated certificates will be preserved for viewing in Certificate History.</p>
-
-          <button
-            className="btn-danger"
-            onClick={() => setShowResetConfirm(true)}
-            disabled={resetting}
-          >
-            <Trash2 size={18} />
-            {resetting ? 'Resetting...' : 'Reset Database'}
+          <button className="notification-btn">
+            <Bell size={20} />
           </button>
+        </div>
 
-          {successMessages.reset && (
-            <div className="success-msg"><CheckCircle size={16} /> {successMessages.reset}</div>
-          )}
-          {errors.reset && (
-            <div className="error-msg"><XCircle size={16} /> {errors.reset}</div>
-          )}
+        <div className="admin-content-area">
+          {/* Status Overview Cards */}
+          <div className="status-cards">
+            <div className="status-card">
+              <div className="status-card-icon backgrounds-icon">
+                <Upload size={20} />
+              </div>
+              <div className="status-card-content">
+                <h3>Backgrounds</h3>
+                <div className="status-items">
+                  {assetStatus?.backgrounds?.COT && <span className="status-check">✓COT</span>}
+                  {assetStatus?.backgrounds?.MDRT && <span className="status-check">✓MDRT</span>}
+                  {assetStatus?.backgrounds?.TOT && <span className="status-check">✓TOT</span>}
+                </div>
+              </div>
+            </div>
+
+            <div className="status-card">
+              <div className="status-card-icon badges-icon">
+                <Upload size={20} />
+              </div>
+              <div className="status-card-content">
+                <h3>Badges</h3>
+                <div className="status-items">
+                  {assetStatus?.badges?.HR && <span className="status-check">✓HR</span>}
+                  {assetStatus?.badges?.LM && <span className="status-check">✓LM</span>}
+                  {assetStatus?.badges?.QC && <span className="status-check">✓QC</span>}
+                </div>
+              </div>
+            </div>
+
+            <div className="status-card">
+              <div className="status-card-icon backgrounds-icon">
+                <Upload size={20} />
+              </div>
+              <div className="status-card-content">
+                <h3>Name Tags</h3>
+                <div className="status-items">
+                  {assetStatus?.nametags?.MDRT && <span className="status-check">✓MDRT</span>}
+                  {assetStatus?.nametags?.COT && <span className="status-check">✓COT</span>}
+                  {assetStatus?.nametags?.TOT && <span className="status-check">✓TOT</span>}
+                </div>
+              </div>
+            </div>
+
+            <div className="status-card">
+              <div className="status-card-icon csv-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                  <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>
+                </svg>
+              </div>
+              <div className="status-card-content">
+                <h3>Master CSV</h3>
+                <div className="status-items">
+                  {assetStatus?.csv && <span className="status-check">✓Data File</span>}
+                  {assetStatus?.csv_info && (
+                    <span className="agent-count">{assetStatus.csv_info.total_agents} Agents</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Master CSV Data Section */}
+          <div className="content-section csv-section">
+            <div className="section-header">
+              <h2 className="section-title">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="section-icon">
+                  <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                  <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>
+                </svg>
+                Master CSV Data
+              </h2>
+            </div>
+            <p className="section-desc">Upload the master CSV file with all agent information</p>
+
+            {assetStatus?.csv_info && (
+              <div className="csv-preview-box">
+                <div className="csv-file-info">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                    <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>
+                  </svg>
+                  <div>
+                    <div className="csv-filename">
+                      {assetStatus.csv_info.filename || 'data.csv'}
+                    </div>
+                    <div className="csv-agent-count">{assetStatus.csv_info.total_agents} agents loaded</div>
+                  </div>
+                  <button className="btn-delete-csv" onClick={handleDeleteCSV}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+                    </svg>
+                    Delete
+                  </button>
+                </div>
+
+                {assetStatus.csv_info.preview && assetStatus.csv_info.preview.length > 0 && (
+                  <div className="csv-data-preview">
+                    <h4>Sample Data Preview</h4>
+                    <div className="preview-list">
+                      {assetStatus.csv_info.preview.slice(0, 6).map((agent, idx) => (
+                        <div key={idx} className="preview-item">
+                          <span className="preview-code">
+                            {agent['Client Cd'] || agent.client_code || 'N/A'}
+                          </span>
+                          <span className="preview-name">
+                            {agent['Agent Name'] || agent.agent_name || 'Unknown'} - {agent['MDRT Title'] || agent.mdrt_tier || 'N/A'}
+                          </span>
+                        </div>
+                      ))}
+                      {assetStatus.csv_info.total_agents > 6 && (
+                        <div className="preview-more">
+                          And {assetStatus.csv_info.total_agents - 6} more agents
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="csv-upload-area">
+              <input
+                type="file"
+                accept=".csv"
+                onChange={(e) => {
+                  const file = e.target.files[0];
+                  if (file) {
+                    // If no CSV exists yet, upload automatically (first time)
+                    // Otherwise, store file and show "Replace CSV" button
+                    if (!assetStatus || !assetStatus.csv) {
+                      handleCSVUpload(file);
+                      e.target.value = ''; // Reset input
+                    } else {
+                      setSelectedCSVFile(file);
+                    }
+                  }
+                }}
+                id="csv-upload"
+                style={{ display: 'none' }}
+              />
+              <label htmlFor="csv-upload" className="file-input-label">
+                {uploading.csv ? 'Uploading...' : 'Choose File'}
+              </label>
+              <span className="file-input-text">
+                {uploading.csv
+                  ? 'Uploading CSV...'
+                  : selectedCSVFile
+                    ? selectedCSVFile.name
+                    : (assetStatus && assetStatus.csv ? 'Select new CSV file' : 'Select a CSV file to upload')}
+              </span>
+            </div>
+
+            {/* Show Replace CSV button only when CSV exists and new file is selected */}
+            {assetStatus && assetStatus.csv && selectedCSVFile && (
+              <button
+                className="btn-upload-csv"
+                onClick={() => {
+                  handleCSVUpload(selectedCSVFile);
+                  setSelectedCSVFile(null);
+                  document.getElementById('csv-upload').value = '';
+                }}
+                disabled={uploading.csv}
+              >
+                {uploading.csv ? 'Uploading...' : 'Replace CSV'}
+              </button>
+            )}
+          </div>
+
+          {/* Tier Backgrounds Section */}
+          <div className="content-section">
+            <div className="section-header">
+              <h2 className="section-title">
+                <Upload size={20} className="section-icon" />
+                Tier Backgrounds
+              </h2>
+              <button className="btn-upload-all">Upload Backgrounds</button>
+            </div>
+            <p className="section-desc">Upload background images for each MDRT tier</p>
+
+            <div className="upload-grid">
+              <FileUploadBox
+                title="MDRT Background"
+                currentFile={assetStatus?.backgrounds?.MDRT}
+                onUpload={(file) => handleBackgroundUpload('MDRT', file)}
+                isUploading={uploading.MDRT}
+                assetType="background"
+                filename="MDRT.png"
+              />
+              <FileUploadBox
+                title="COT Background"
+                currentFile={assetStatus?.backgrounds?.COT}
+                onUpload={(file) => handleBackgroundUpload('COT', file)}
+                isUploading={uploading.COT}
+                assetType="background"
+                filename="COT.png"
+              />
+              <FileUploadBox
+                title="TOT Background"
+                currentFile={assetStatus?.backgrounds?.TOT}
+                onUpload={(file) => handleBackgroundUpload('TOT', file)}
+                isUploading={uploading.TOT}
+                assetType="background"
+                filename="TOT.png"
+              />
+            </div>
+          </div>
+
+          {/* Achievement Badges Section */}
+          <div className="content-section">
+            <div className="section-header">
+              <h2 className="section-title">
+                <Upload size={20} className="section-icon" />
+                Achievement Badges
+              </h2>
+              <button className="btn-upload-all">Upload Badges</button>
+            </div>
+            <p className="section-desc">Upload badge images for achievements</p>
+
+            <div className="upload-grid">
+              <FileUploadBox
+                title="Life Member"
+                currentFile={assetStatus?.badges?.LM}
+                onUpload={(file) => handleBadgeUpload('LM', file)}
+                isUploading={uploading.LM}
+                assetType="badge"
+                filename="LM.png"
+              />
+              <FileUploadBox
+                title="Honor Roll"
+                currentFile={assetStatus?.badges?.HR}
+                onUpload={(file) => handleBadgeUpload('HR', file)}
+                isUploading={uploading.HR}
+                assetType="badge"
+                filename="HR.png"
+              />
+              <FileUploadBox
+                title="Quarter Century"
+                currentFile={assetStatus?.badges?.QC}
+                onUpload={(file) => handleBadgeUpload('QC', file)}
+                isUploading={uploading.QC}
+                assetType="badge"
+                filename="QC.png"
+              />
+            </div>
+          </div>
+
+          {/* Name Tag Banners Section */}
+          <div className="content-section">
+            <div className="section-header">
+              <h2 className="section-title">
+                <Upload size={20} className="section-icon" />
+                Name Tag Banners
+              </h2>
+              <button className="btn-upload-all">Upload Name Tags</button>
+            </div>
+            <p className="section-desc">Upload name tag banner images for each MDRT tier</p>
+
+            <div className="upload-grid">
+              <FileUploadBox
+                title="MDRT Name Tag"
+                currentFile={assetStatus?.nametags?.MDRT}
+                onUpload={(file) => handleNametagUpload('MDRT', file)}
+                isUploading={uploading.MDRT_nametag}
+                assetType="nametag"
+                filename="MDRT.png"
+              />
+              <FileUploadBox
+                title="COT Name Tag"
+                currentFile={assetStatus?.nametags?.COT}
+                onUpload={(file) => handleNametagUpload('COT', file)}
+                isUploading={uploading.COT_nametag}
+                assetType="nametag"
+                filename="COT.png"
+              />
+              <FileUploadBox
+                title="TOT Name Tag"
+                currentFile={assetStatus?.nametags?.TOT}
+                onUpload={(file) => handleNametagUpload('TOT', file)}
+                isUploading={uploading.TOT_nametag}
+                assetType="nametag"
+                filename="TOT.png"
+              />
+            </div>
+          </div>
+
+          {/* Reset Database Section */}
+          <div className="content-section">
+            <div className="section-header">
+              <h2 className="section-title reset-title">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" strokeWidth="2" strokeLinecap="round"/>
+                </svg>
+                Reset Database
+              </h2>
+            </div>
+            <p className="section-desc">Clear all admin assets and agent data. Generated certificates will be preserved for viewing in Certificate History</p>
+
+            <button
+              className="btn-reset"
+              onClick={() => setShowResetConfirm(true)}
+            >
+              Reset Database
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* Image Preview Modal */}
+      {previewImage && (
+        <div className="modal-overlay" onClick={() => setPreviewImage(null)}>
+          <div className="modal-content preview-modal" onClick={e => e.stopPropagation()}>
+            <div className="preview-header">
+              <h3>{previewImage.title}</h3>
+              <button className="modal-close" onClick={() => setPreviewImage(null)}>×</button>
+            </div>
+            <div className="preview-body">
+              <img src={previewImage.url} alt={previewImage.title} />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Reset Confirmation Modal */}
       {showResetConfirm && (
         <div className="modal-overlay" onClick={() => setShowResetConfirm(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <AlertTriangle size={32} className="warning-icon" />
-              <h2>Confirm Database Reset</h2>
-            </div>
-            <div className="modal-body">
-              <p>This will permanently delete:</p>
-              <ul>
-                <li>All {assetStatus?.agent_count || 0} agents from the database</li>
-                <li>All tier backgrounds (MDRT, COT, TOT)</li>
-                <li>All achievement badges (LM, HR, QC)</li>
-                <li>Master CSV data file</li>
-              </ul>
-              <p className="warning-text">
-                <strong>Generated certificates will be preserved</strong> for viewing in Certificate History.
-              </p>
-              <p>Are you sure you want to continue?</p>
-            </div>
+          <div className="confirm-modal" onClick={e => e.stopPropagation()}>
+            <h3>Confirm Reset</h3>
+            <p>Are you sure you want to reset the database? This will clear all admin assets and agent data.</p>
             <div className="modal-actions">
-              <button
-                className="btn-cancel"
-                onClick={() => setShowResetConfirm(false)}
-                disabled={resetting}
-              >
-                Cancel
-              </button>
-              <button
-                className="btn-danger"
-                onClick={handleResetDatabase}
-                disabled={resetting}
-              >
-                {resetting ? 'Resetting...' : 'Yes, Reset Everything'}
-              </button>
+              <button className="btn-cancel" onClick={() => setShowResetConfirm(false)}>Cancel</button>
+              <button className="btn-confirm-reset" onClick={handleResetDatabase}>Reset Database</button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {previewModal && (
-        <ImagePreviewModal
-          image={previewModal}
-          onClose={() => setPreviewModal(null)}
-        />
-      )}
-    </div>
-  );
-}
-
-// Helper Components
-function StatusCard({ title, items, icon, extra }) {
-  if (!items) {
-    return (
-      <div className="status-card incomplete">
-        <div className="status-card-header">
-          {icon}
-          <h3>{title}</h3>
-        </div>
-        <div className="status-items">
-          <div className="status-item">
-            <XCircle size={16} className="icon-error" />
-            <span>Loading...</span>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const allComplete = Object.values(items).every(v => v === true);
-
-  return (
-    <div className={`status-card ${allComplete ? 'complete' : 'incomplete'}`}>
-      <div className="status-card-header">
-        {icon}
-        <h3>{title}</h3>
-      </div>
-      <div className="status-items">
-        {Object.entries(items).map(([key, value]) => (
-          <div key={key} className="status-item">
-            {value ? <CheckCircle size={16} className="icon-success" /> : <XCircle size={16} className="icon-error" />}
-            <span>{key}</span>
-          </div>
-        ))}
-      </div>
-      {extra && <div className="status-extra">{extra}</div>}
-    </div>
-  );
-}
-
-function BackgroundsUploader({ onUpload, uploading, error, success, status, onPreview }) {
-  const [files, setFiles] = useState({ mdrt: null, cot: null, tot: null });
-
-  const handleUpload = () => {
-    onUpload(files);
-  };
-
-  return (
-    <div className="uploader-section">
-      <h2><ImageIcon size={24} /> Tier Backgrounds</h2>
-      <p className="section-desc">Upload background images for each MDRT tier</p>
-
-      <div className="backgrounds-grid">
-        {[
-          { key: 'mdrt', label: 'MDRT', color: 'blue' },
-          { key: 'cot', label: 'COT', color: 'red' },
-          { key: 'tot', label: 'TOT', color: 'gold' }
-        ].map(tier => (
-          <div key={tier.key} className="upload-box">
-            <label className="upload-label">{tier.label} Background</label>
-            <input
-              type="file"
-              accept="image/png,image/jpeg"
-              onChange={(e) => setFiles({ ...files, [tier.key]: e.target.files[0] })}
-              className="file-input"
-            />
-            {files[tier.key] && <span className="file-name">✓ {files[tier.key].name}</span>}
-
-            {status?.[tier.label.toUpperCase()] && (
-              <div className="preview-container">
-                <img
-                  src={`${API_URL}/admin/preview-asset/background/${tier.label.toUpperCase()}.png`}
-                  alt={`${tier.label} preview`}
-                  className="mini-preview"
-                />
-                <button
-                  className="preview-btn-small"
-                  onClick={() => onPreview('background', `${tier.label.toUpperCase()}.png`, `${tier.label} Background`)}
-                >
-                  <Eye size={14} /> Preview
-                </button>
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-
-      <button className="upload-btn" onClick={handleUpload} disabled={uploading}>
-        {uploading ? 'Uploading...' : 'Upload Backgrounds'}
-      </button>
-
-      {success && <div className="success-msg"><CheckCircle size={16} /> {success}</div>}
-      {error && <div className="error-msg"><XCircle size={16} /> {error}</div>}
-    </div>
-  );
-}
-
-function BadgesUploader({ onUpload, uploading, error, success, status, onPreview }) {
-  const [files, setFiles] = useState({ lm: null, hr: null, qc: null });
-
-  const handleUpload = () => {
-    onUpload(files);
-  };
-
-  return (
-    <div className="uploader-section">
-      <h2><ImageIcon size={24} /> Achievement Badges</h2>
-      <p className="section-desc">Upload badge images for achievements</p>
-
-      <div className="backgrounds-grid">
-        {[
-          { key: 'lm', label: 'LM', fullName: 'Life Member' },
-          { key: 'hr', label: 'HR', fullName: 'Honor Roll' },
-          { key: 'qc', label: 'QC', fullName: 'Quarter Century' }
-        ].map(badge => (
-          <div key={badge.key} className="upload-box">
-            <label className="upload-label">{badge.fullName}</label>
-            <input
-              type="file"
-              accept="image/png"
-              onChange={(e) => setFiles({ ...files, [badge.key]: e.target.files[0] })}
-              className="file-input"
-            />
-            {files[badge.key] && <span className="file-name">✓ {files[badge.key].name}</span>}
-
-            {status?.[badge.label] && (
-              <div className="preview-container">
-                <img
-                  src={`${API_URL}/admin/preview-asset/badge/${badge.label}.png`}
-                  alt={`${badge.fullName} preview`}
-                  className="mini-preview"
-                />
-                <button
-                  className="preview-btn-small"
-                  onClick={() => onPreview('badge', `${badge.label}.png`, badge.fullName)}
-                >
-                  <Eye size={14} /> Preview
-                </button>
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-
-      <button className="upload-btn" onClick={handleUpload} disabled={uploading}>
-        {uploading ? 'Uploading...' : 'Upload Badges'}
-      </button>
-
-      {success && <div className="success-msg"><CheckCircle size={16} /> {success}</div>}
-      {error && <div className="error-msg"><XCircle size={16} /> {error}</div>}
-    </div>
-  );
-}
-
-function CSVUploader({ onUpload, onDelete, uploading, error, success, csvPreview, hasCSV }) {
-  const [file, setFile] = useState(null);
-
-  const handleUpload = () => {
-    if (file) {
-      onUpload(file);
-      setFile(null); // Clear file input after upload
-    }
-  };
-
-  return (
-    <div className="uploader-section csv-section">
-      <h2><FileText size={24} /> Master CSV Data</h2>
-      <p className="section-desc">Upload the master CSV file with all agent information</p>
-
-      {/* Show current CSV file if exists */}
-      {hasCSV && csvPreview && (
-        <div className="current-csv-info">
-          <div className="csv-file-card">
-            <FileText size={24} className="csv-file-icon" />
-            <div className="csv-file-details">
-              <span className="csv-filename">{csvPreview.filename || 'data.csv'}</span>
-              <span className="csv-agent-count">{csvPreview.total_agents} agents loaded</span>
-            </div>
-            <button
-              className="btn-delete-csv"
-              onClick={onDelete}
-              title="Delete CSV file"
-            >
-              <Trash2 size={18} />
-              Delete
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Upload new CSV */}
-      <div className="csv-upload-area">
-        <input
-          type="file"
-          accept=".csv"
-          onChange={(e) => setFile(e.target.files[0])}
-          className="file-input"
-        />
-        {file && <span className="file-name">✓ {file.name}</span>}
-      </div>
-
-      <button className="upload-btn" onClick={handleUpload} disabled={uploading || !file}>
-        {uploading ? 'Uploading...' : hasCSV ? 'Replace CSV' : 'Upload CSV'}
-      </button>
-
-      {success && <div className="success-msg"><CheckCircle size={16} /> {success}</div>}
-      {error && <div className="error-msg"><XCircle size={16} /> {error}</div>}
-
-      {csvPreview && (
-        <div className="csv-preview">
-          <h3>Sample Data Preview</h3>
-          <div className="csv-table">
-            {csvPreview.preview && csvPreview.preview.slice(0, 5).map((row, idx) => (
-              <div key={idx} className="csv-row">
-                <strong>{row['Client Cd']}</strong>: {row['Agent Name']} - {row['MDRT Title']}
-              </div>
-            ))}
-            {csvPreview.total_agents > 5 && (
-              <div className="csv-row more-info">
-                ... and {csvPreview.total_agents - 5} more agents
-              </div>
-            )}
           </div>
         </div>
       )}

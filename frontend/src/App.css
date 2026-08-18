@@ -45,11 +45,11 @@ body {
 
 .nav-link:hover {
   background: #f7fafc;
-  color: #667eea;
+  color: #ef4444;
 }
 
 .nav-link.active {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #ef4444;
   color: white;
 }
 
@@ -61,7 +61,7 @@ body {
 
 .nav-button:hover {
   background: #f7fafc;
-  color: #667eea;
+  color: #ef4444;
 }
 
 .logout-btn:hover {
@@ -160,8 +160,8 @@ body {
 }
 
 .history-card:hover {
-  border-color: #667eea;
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.1);
+  border-color: #ef4444;
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.1);
   transform: translateY(-2px);
 }
 
@@ -179,7 +179,7 @@ body {
 
 .tier-badge {
   display: inline-block;
-  background: linear-gradient(135deg, #667eea, #764ba2);
+  background: #ef4444;
   color: white;
   padding: 0.25rem 0.75rem;
   border-radius: 6px;
@@ -236,12 +236,12 @@ body {
 
 .btn-view {
   background: white;
-  color: #667eea;
-  border: 2px solid #667eea;
+  color: #ef4444;
+  border: 2px solid #ef4444;
 }
 
 .btn-view:hover {
-  background: #667eea;
+  background: #ef4444;
   color: white;
 }
 

@@ -11,6 +11,7 @@
   z-index: 9999;
   animation: fadeIn 0.2s ease-out;
   backdrop-filter: blur(4px);
+  padding: 10px;
 }
 
 @keyframes fadeIn {
@@ -25,12 +26,13 @@
 .modal-content {
   background: white;
   border-radius: 12px;
-  max-width: 90vw;
-  max-height: 90vh;
+  max-width: 500px;
+  max-height: 95vh;
   display: flex;
   flex-direction: column;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
   animation: slideUp 0.3s ease-out;
+  overflow: hidden;
 }
 
 @keyframes slideUp {
@@ -48,28 +50,33 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 20px 24px;
+  padding: 8px 12px;
   border-bottom: 1px solid #e5e7eb;
+  flex-shrink: 0;
 }
 
 .modal-header h3 {
   margin: 0;
-  font-size: 20px;
+  font-size: 14px;
   font-weight: 600;
   color: #1f2937;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .close-btn {
   background: none;
   border: none;
   cursor: pointer;
-  padding: 8px;
+  padding: 6px;
   border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.2s;
   color: #6b7280;
+  flex-shrink: 0;
 }
 
 .close-btn:hover {
@@ -78,9 +85,10 @@
 }
 
 .modal-body {
-  padding: 24px;
-  overflow: auto;
+  padding: 8px;
+  overflow: hidden;
   flex: 1;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -89,8 +97,8 @@
 
 .modal-image {
   max-width: 100%;
-  max-height: 70vh;
-  width: auto;
+  max-height: 100%;
+  width: 100%;
   height: auto;
   object-fit: contain;
   border-radius: 8px;
@@ -102,10 +110,11 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 24px;
+  padding: 8px 12px;
   border-top: 1px solid #e5e7eb;
   background: white;
   border-radius: 0 0 12px 12px;
+  flex-shrink: 0;
 }
 
 .image-info {
@@ -124,16 +133,16 @@
   border-radius: 12px;
   font-size: 12px;
   font-weight: 600;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #ef4444;
   color: white;
 }
 
 .download-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 20px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  gap: 6px;
+  padding: 8px 16px;
+  background: #ef4444;
   color: white;
   border: none;
   border-radius: 8px;
@@ -144,33 +153,39 @@
 }
 
 .download-btn:hover {
+  background: #dc2626;
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
 }
 
 /* Responsive */
 @media (max-width: 768px) {
+  .modal-backdrop {
+    padding: 20px 10px;
+  }
+
   .modal-content {
     max-width: 95vw;
-    max-height: 95vh;
+    max-height: 90vh;
   }
 
   .modal-header {
-    padding: 16px;
+    padding: 10px 12px;
+  }
+
+  .modal-header h3 {
+    font-size: 14px;
   }
 
   .modal-body {
-    padding: 16px;
-  }
-
-  .modal-image {
-    max-height: 60vh;
+    padding: 10px;
   }
 
   .modal-footer {
     flex-direction: column;
-    gap: 12px;
+    gap: 8px;
     align-items: stretch;
+    padding: 8px 12px;
   }
 
   .image-info {
