@@ -111,25 +111,6 @@
   margin: 0;
 }
 
-.notification-btn {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  border: none;
-  background: white;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all 0.2s;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.notification-btn:hover {
-  background: #f9fafb;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
-}
-
 /* Content Area */
 .admin-content-area {
   display: flex;
@@ -503,27 +484,7 @@
   cursor: not-allowed;
 }
 
-/* Reset Section */
-.reset-title {
-  color: #ef4444;
-}
 
-.btn-reset {
-  background: #ef4444;
-  color: white;
-  border: none;
-  padding: 12px 24px;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-reset:hover {
-  background: #dc2626;
-  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.25);
-}
 
 /* Modals */
 .modal-overlay {
@@ -625,55 +586,6 @@
   border-radius: 50%;
   font-size: 24px;
   cursor: pointer;
-}
-
-.confirm-modal {
-  background: white;
-  padding: 32px;
-  border-radius: 16px;
-  max-width: 440px;
-  width: 90%;
-}
-
-.confirm-modal h3 {
-  margin: 0 0 12px 0;
-  font-size: 20px;
-  color: #1a1a1a;
-}
-
-.confirm-modal p {
-  margin: 0 0 24px 0;
-  color: #6b7280;
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-.modal-actions {
-  display: flex;
-  gap: 12px;
-  justify-content: flex-end;
-}
-
-.btn-cancel {
-  padding: 10px 20px;
-  background: #f3f4f6;
-  border: none;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  color: #374151;
-}
-
-.btn-confirm-reset {
-  padding: 10px 20px;
-  background: #ef4444;
-  border: none;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  color: white;
 }
 
 /* New Upload Box with Mini Preview */

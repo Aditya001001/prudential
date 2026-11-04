@@ -1,7 +1,7 @@
 {
-  "short_name": "MDRT Cert",
-  "name": "Prudential MDRT Certificate Generator",
-  "description": "Generate your MDRT achievement certificates",
+  "short_name": "保誠海報",
+  "name": "保誠 MDRT 海報產生器",
+  "description": "製作您的 MDRT 成就海報",
   "icons": [
     {
       "src": "favicon.ico",
@@ -29,5 +29,6 @@
   "display": "standalone",
   "theme_color": "#ef4444",
   "background_color": "#fce7f3",
-  "orientation": "portrait"
+  "orientation": "portrait",
+  "lang": "zh-Hant-HK"
 }

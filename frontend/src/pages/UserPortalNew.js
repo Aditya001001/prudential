@@ -1,17 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
-import { Camera, Check, Download, Eye, RefreshCw, History, SwitchCamera } from 'lucide-react';
+import axios, { API_URL, errorMessage } from '../api';
+import { Check, Download, Eye, LogOut, Pencil, RefreshCw, SlidersHorizontal, SwitchCamera } from 'lucide-react';
 import Loader from '../components/Loader';
+import PortraitEditor from '../components/PortraitEditor';
+import PosterPreview from '../components/PosterPreview';
 import './UserPortalNew.css';
 
-const API_URL = '/prudential-api';
 
 function UserPortalNew() {
-  const navigate = useNavigate();
-  const [systemReady, setSystemReady] = useState(false);
+  const [systemReady, setSystemReady] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState(null);
+  const [editingPortrait, setEditingPortrait] = useState(false);
+  const [posterReady, setPosterReady] = useState(false);
   const [error, setError] = useState(null);
   const [clientCode, setClientCode] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
@@ -22,13 +23,14 @@ function UserPortalNew() {
   const videoRef = React.useRef(null);
   const canvasRef = React.useRef(null);
   const streamRef = React.useRef(null);
-  const [photoResolution, setPhotoResolution] = useState(null);
   const [resolutionWarning, setResolutionWarning] = useState(null);
 
   // Real-time validation states
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState(null);
   const validationTimeoutRef = React.useRef(null);
+  const validationRequestRef = React.useRef(null);
+  const currentCodeRef = React.useRef('');
 
   useEffect(() => {
     checkSystemStatus();
@@ -53,23 +55,31 @@ function UserPortalNew() {
 
     setValidating(true);
     try {
-      const response = await axios.get(`${API_URL}/validate-client-code/${encodeURIComponent(code.trim())}`);
-      setValidationResult(response.data);
+      validationRequestRef.current = new AbortController();
+      const response = await axios.get(`${API_URL}/validate-client-code/${encodeURIComponent(code.trim())}`, { signal: validationRequestRef.current.signal });
+      if (currentCodeRef.current === code) setValidationResult({
+        ...response.data,
+        message: response.data.exists ? '已找到客戶編號。' : `找不到客戶編號「${code.trim()}」，請檢查後重試。`
+      });
     } catch (error) {
-      console.error('Validation error:', error);
+      if (error.code === 'ERR_CANCELED' || currentCodeRef.current !== code) return;
       setValidationResult({
         success: false,
         exists: false,
-        message: 'Error validating client code'
+        message: "驗證客戶編號時發生錯誤。"
       });
     } finally {
-      setValidating(false);
+      if (currentCodeRef.current === code) setValidating(false);
     }
   };
 
   // Handle client code input change with debounced validation
   const handleClientCodeChange = (e) => {
     const value = e.target.value;
+    currentCodeRef.current = value;
+    validationRequestRef.current?.abort();
+    setValidationResult(null);
+    setValidating(Boolean(value.trim()));
     setClientCode(value);
     setError(null);
 
@@ -87,6 +97,12 @@ function UserPortalNew() {
   const handleFileSelect = (e) => {
     const file = e.target.files[0];
     if (file) {
+      if (!['image/png', 'image/jpeg'].includes(file.type) || file.size > 50 * 1024 * 1024) {
+        setError("請選擇小於 50 MB 的 PNG 或 JPEG 圖片。");
+        return;
+      }
+      setError(null);
+      setResolutionWarning(null);
       setSelectedFile(file);
       const reader = new FileReader();
       reader.onloadend = () => {
@@ -96,7 +112,6 @@ function UserPortalNew() {
           const height = img.height;
           const megapixels = (width * height) / 1_000_000;
 
-          setPhotoResolution({ width, height, megapixels });
 
           // Check resolution quality
           const MIN_WIDTH = 1000;
@@ -107,24 +122,26 @@ function UserPortalNew() {
           if (width < MIN_WIDTH || height < MIN_HEIGHT) {
             setResolutionWarning({
               level: 'error',
-              message: `⚠️ Low Resolution: ${width}×${height} (${megapixels.toFixed(2)} MP). For best quality, upload at least ${MIN_WIDTH}×${MIN_HEIGHT} pixels (1.5 MP). Photo may appear pixelated.`
+              message: `解像度偏低：${width} × ${height} 像素（${megapixels.toFixed(2)} 百萬像素）。為獲得最佳效果，請上傳至少 ${MIN_WIDTH} × ${MIN_HEIGHT} 像素（150 萬像素）的照片；否則照片可能顯得模糊。`
             });
           } else if (width < IDEAL_WIDTH || height < IDEAL_HEIGHT) {
             setResolutionWarning({
               level: 'warning',
-              message: `ℹ️ Good Resolution: ${width}×${height} (${megapixels.toFixed(2)} MP). For optimal quality, upload ${IDEAL_WIDTH}×${IDEAL_HEIGHT} pixels or higher.`
+              message: `解像度良好：${width} × ${height} 像素（${megapixels.toFixed(2)} 百萬像素）。為獲得更佳效果，建議上傳 ${IDEAL_WIDTH} × ${IDEAL_HEIGHT} 像素或以上的照片。`
             });
           } else {
             setResolutionWarning({
               level: 'success',
-              message: `✅ Excellent Resolution: ${width}×${height} (${megapixels.toFixed(2)} MP). Photo will look great!`
+              message: `解像度極佳：${width} × ${height} 像素（${megapixels.toFixed(2)} 百萬像素）。照片適合用於製作海報。`
             });
           }
         };
+        img.onerror = () => { setError("無法讀取此圖片，請選擇 PNG 或 JPEG 圖片。"); setSelectedFile(null); setStep(2); };
         img.src = reader.result;
         setPreviewImage(reader.result);
         setStep(3); // Move to preview step
       };
+      reader.onerror = () => setError("無法讀取此檔案，請重試。");
       reader.readAsDataURL(file);
     }
   };
@@ -178,7 +195,7 @@ function UserPortalNew() {
 
     } catch (error) {
       console.error('Error accessing camera:', error);
-      setError('Failed to access camera. Please check your permissions and ensure you are using HTTPS.');
+      setError("無法開啟相機，請確認已授予相機權限，並使用安全連線。");
       setShowCamera(false);
     }
   };
@@ -210,6 +227,7 @@ function UserPortalNew() {
       canvas.toBlob((blob) => {
         const file = new File([blob], 'captured-photo.jpg', { type: 'image/jpeg' });
         setSelectedFile(file);
+        setResolutionWarning(null);
         setPreviewImage(canvas.toDataURL());
         stopCamera();
         setStep(3);
@@ -248,20 +266,21 @@ function UserPortalNew() {
 
   const handleFileUpload = async () => {
     if (!systemReady) {
-      setError('System is not ready. Please contact the administrator.');
+      setError("系統尚未準備就緒，請聯絡管理員。");
       return;
     }
 
     if (!clientCode.trim()) {
-      setError('Please enter your Client Code');
+      setError("請輸入客戶編號。");
       return;
     }
 
     if (!selectedFile) {
-      setError('Please select a photo to upload');
+      setError("請選擇要上傳的照片。");
       return;
     }
 
+    setPosterReady(false);
     setUploading(true);
     setError(null);
     setResult(null);
@@ -279,26 +298,33 @@ function UserPortalNew() {
         setResult({
           agentInfo: response.data.agent_info,
           certificateFile: response.data.certificate_file,
+          certificateId: response.data.certificate?.id,
+          editable: response.data.certificate?.editable,
           timestamp: Date.now() // Add timestamp to bust cache
         });
         setStep(4); // Move to result step
       }
     } catch (error) {
-      setError(error.response?.data?.error || 'Failed to generate certificate. Please try again.');
+      setError(errorMessage(error, "無法產生海報，請重試。"));
     } finally {
       setUploading(false);
     }
   };
 
   const handleDownload = () => {
-    if (result?.certificateFile) {
+    if (posterReady && result?.certificateFile) {
       window.open(`${API_URL}/user/download/${result.certificateFile}`, '_blank');
     }
   };
 
   const handleNewCertificate = () => {
+    setEditingPortrait(false);
+    setPosterReady(false);
     setResult(null);
     setError(null);
+    currentCodeRef.current = '';
+    validationRequestRef.current?.abort();
+    clearTimeout(validationTimeoutRef.current);
     setClientCode('');
     setSelectedFile(null);
     setPreviewImage(null);
@@ -310,17 +336,23 @@ function UserPortalNew() {
   React.useEffect(() => {
     return () => {
       stopCamera();
+      clearTimeout(validationTimeoutRef.current);
+      validationRequestRef.current?.abort();
     };
   }, []);
+
+  if (systemReady === null) return <div className="portal-wrapper" role="status">正在檢查系統狀態…</div>;
 
   if (!systemReady) {
     return (
       <div className="portal-wrapper">
+      {error && <div className="request-error" role="alert">{error}</div>}
         <div className="step-card">
           <div className="system-error">
-            <h2>System Not Ready</h2>
-            <p>The certificate generator is not available at the moment.</p>
-            <p className="error-hint">Please contact the administrator.</p>
+            <h2>系統尚未準備就緒</h2>
+            <p>海報產生器暫時無法使用。</p>
+            <p className="error-hint">請聯絡管理員。</p>
+            <button onClick={() => { setSystemReady(null); checkSystemStatus(); }}>重試</button>
           </div>
         </div>
       </div>
@@ -329,47 +361,47 @@ function UserPortalNew() {
 
   return (
     <div className="portal-wrapper">
-      {uploading && <Loader message="Generating your certificate" estimatedTime={15} />}
+      {error && <div className="request-error" role="alert">{error}</div>}
+      {uploading && <Loader message="正在產生海報" estimatedTime={15} />}
       <canvas ref={canvasRef} style={{ display: 'none' }} />
 
       {/* Step 1: Enter Client Code */}
       {step === 1 && (
         <div className="step-card">
           <div className="card-header">
-            <img src="/prudential/PRU_logo_black.png" alt="Prudential" className="logo" />
+            <img src={`${process.env.PUBLIC_URL}/PRU_logo_black.png`} alt="保誠" className="logo" />
           </div>
 
-          <h1 className="card-title">Prudential Certificate Generator</h1>
+          <h1 className="card-title">保誠海報產生器</h1>
 
           <div className="steps-indicator">
             <div className="step-item active">
               <div className="step-number">1</div>
-              <div className="step-label">Enter Your Client Code</div>
+              <div className="step-label">輸入客戶編號</div>
             </div>
             <div className="step-item">
               <div className="step-number">2</div>
-              <div className="step-label">Provide Your Photo</div>
+              <div className="step-label">提供照片</div>
             </div>
             <div className="step-item">
               <div className="step-number">3</div>
-              <div className="step-label">Verify Photo</div>
+              <div className="step-label">確認照片</div>
             </div>
           </div>
 
           <div className="form-section">
-            <label className="form-label">Enter Your Client Code</label>
-            <p className="form-hint">Please enter your unique client identification code</p>
+            <label className="form-label">輸入客戶編號</label>
 
             <input
               type="text"
               className={`input-field ${validationResult ? (validationResult.exists ? 'valid' : 'invalid') : ''}`}
-              placeholder="Enter client code (e.g., 12345678)"
+              placeholder="輸入客戶編號（例如：12345678）"
               value={clientCode}
               onChange={handleClientCodeChange}
               maxLength={20}
             />
 
-            {validating && <p className="validation-text">Validating...</p>}
+            {validating && <p className="validation-text">正在驗證…</p>}
             {validationResult && !validating && (
               <p className={`validation-text ${validationResult.exists ? 'success' : 'error'}`}>
                 {validationResult.message}
@@ -386,7 +418,7 @@ function UserPortalNew() {
             }}
             disabled={!validationResult?.exists}
           >
-            Next: Upload your Photo →
+            下一步：上傳照片 →
           </button>
 
         </div>
@@ -396,39 +428,40 @@ function UserPortalNew() {
       {step === 2 && (
         <div className="step-card">
           <div className="card-header">
-            <img src="/prudential/PRU_logo_black.png" alt="Prudential" className="logo" />
+            <img src={`${process.env.PUBLIC_URL}/PRU_logo_black.png`} alt="保誠" className="logo" />
           </div>
 
-          <h1 className="card-title">Prudential Certificate Generator</h1>
+          <h1 className="card-title">保誠海報產生器</h1>
 
           <div className="steps-indicator">
             <div className="step-item completed">
               <div className="step-number"><Check size={16} /></div>
-              <div className="step-label">Enter Your Client Code</div>
+              <div className="step-label">輸入客戶編號</div>
             </div>
             <div className="step-item active">
               <div className="step-number">2</div>
-              <div className="step-label">Provide Your Photo</div>
+              <div className="step-label">提供照片</div>
             </div>
             <div className="step-item">
               <div className="step-number">3</div>
-              <div className="step-label">Verify Photo</div>
+              <div className="step-label">確認照片</div>
             </div>
           </div>
 
           <div className="form-section">
             <div className="form-header-row">
-              <label className="form-label">Provide Your Photo</label>
-              <p className="form-hint">Client code: <span className="client-code-highlight">{clientCode}</span></p>
+              <label className="form-label">提供照片</label>
+              <p className="form-hint">客戶編號： <span className="client-code-highlight">{clientCode}</span></p>
             </div>
 
             {!showCamera && (
               <div className="upload-options">
                 <input
                   type="file"
-                  accept="image/*"
+                  accept="image/png,image/jpeg"
                   onChange={handleFileSelect}
                   id="file-upload"
+                  aria-describedby="photo-upload-guidance photo-upload-requirements"
                   style={{ display: 'none' }}
                 />
 
@@ -437,24 +470,35 @@ function UserPortalNew() {
                     <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
                     <circle cx="12" cy="13" r="4"/>
                   </svg>
-                  <span className="upload-text">Capture with Camera</span>
+                  <span className="upload-text">使用相機拍照</span>
                 </div>
 
-                <div className="divider">OR</div>
+                <div className="divider">或</div>
 
-                <label htmlFor="file-upload" className="upload-box">
-                  <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2">
-                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
-                  </svg>
-                  <span className="upload-text">Upload from Device</span>
-                </label>
+                <div className="device-upload">
+                  <label htmlFor="file-upload" className="upload-box">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2" aria-hidden="true">
+                      <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+                    </svg>
+                    <span className="upload-text">從裝置上傳</span>
+                  </label>
+                  <div className="photo-upload-help">
+                    <p id="photo-upload-guidance">請上載清晰半身職業照，面部清楚可見。</p>
+                    <ul id="photo-upload-requirements">
+                      <li><strong>檔案格式：</strong> JPG／JPEG 或 PNG</li>
+                      <li><strong>檔案大小：</strong> 少於 50 MB</li>
+                      <li><strong>最低建議解像度：</strong> 1,000 × 1,500 像素</li>
+                      <li><strong>最高解像度：</strong> 2,500 萬像素</li>
+                    </ul>
+                  </div>
+                </div>
               </div>
             )}
           </div>
 
           <div className="button-group">
-            <button className="btn-secondary" onClick={handleBack}>Back</button>
-            <button className="btn-primary" disabled>Next →</button>
+            <button className="btn-secondary" onClick={handleBack}>返回</button>
+            <button className="btn-primary" disabled>下一步 →</button>
           </div>
         </div>
       )}
@@ -463,29 +507,29 @@ function UserPortalNew() {
       {step === 3 && (
         <div className="step-card">
           <div className="card-header">
-            <img src="/prudential/PRU_logo_black.png" alt="Prudential" className="logo" />
+            <img src={`${process.env.PUBLIC_URL}/PRU_logo_black.png`} alt="保誠" className="logo" />
           </div>
 
-          <h1 className="card-title">Prudential Certificate Generator</h1>
+          <h1 className="card-title">保誠海報產生器</h1>
 
           <div className="steps-indicator">
             <div className="step-item completed">
               <div className="step-number"><Check size={16} /></div>
-              <div className="step-label">Enter Your Client Code</div>
+              <div className="step-label">輸入客戶編號</div>
             </div>
             <div className="step-item completed">
               <div className="step-number"><Check size={16} /></div>
-              <div className="step-label">Provide Your Photo</div>
+              <div className="step-label">提供照片</div>
             </div>
             <div className="step-item active">
               <div className="step-number">3</div>
-              <div className="step-label">Verify Photo</div>
+              <div className="step-label">確認照片</div>
             </div>
           </div>
 
           <div className="form-section">
-            <label className="form-label">Verify Photo</label>
-            <p className="form-hint">Client code: <span className="client-code-highlight">{clientCode}</span></p>
+            <label className="form-label">確認照片</label>
+            <p className="form-hint">客戶編號： <span className="client-code-highlight">{clientCode}</span></p>
 
             {resolutionWarning && (
               <div className={`resolution-warning ${resolutionWarning.level}`}>
@@ -494,18 +538,18 @@ function UserPortalNew() {
             )}
 
             <div className="photo-preview">
-              <img src={previewImage} alt="Your photo" />
+              <img src={previewImage} alt="您的肖像照" />
             </div>
           </div>
 
           <div className="button-group">
-            <button className="btn-secondary" onClick={handleBack}>Back</button>
+            <button className="btn-secondary" onClick={handleBack}>返回</button>
             <button
               className="btn-primary"
               onClick={handleFileUpload}
               disabled={uploading}
             >
-              {uploading ? 'Generating...' : 'Next →'}
+              {uploading ? "正在產生…" : "下一步 →"}
             </button>
           </div>
         </div>
@@ -515,43 +559,56 @@ function UserPortalNew() {
       {step === 4 && result && (
         <div className="step-card result-card">
           <div className="card-header">
-            <img src="/prudential/PRU_logo_black.png" alt="Prudential" className="logo" />
+            <img src={`${process.env.PUBLIC_URL}/PRU_logo_black.png`} alt="保誠" className="logo" />
           </div>
 
           <h2 className="success-title">
             <div className="success-icon">
               <Check size={16} color="#10b981" />
             </div>
-            Certificate Generated
+            海報已產生
           </h2>
 
-          <div className="certificate-preview" onClick={() => window.open(`${API_URL}/user/preview/${result.certificateFile}?t=${result.timestamp}`, '_blank')} title="Click to view full size">
-            <img
-              src={`${API_URL}/user/preview/${result.certificateFile}?t=${result.timestamp}`}
-              alt="Certificate"
-              className="cert-image"
-            />
-            <div className="preview-hint">
-              <Eye size={16} />
-              <span>Click to view full size</span>
-            </div>
-          </div>
+          <PosterPreview key={result.certificateFile}
+            src={`${API_URL}/user/preview/${result.certificateFile}?t=${result.timestamp}`}
+            updated={Boolean(result.edited)} onReady={setPosterReady}
+            onView={() => window.open(`${API_URL}/user/preview/${result.certificateFile}?t=${result.timestamp}`, '_blank')} />
 
           <div className="result-actions">
-            <button className="btn-action btn-download" onClick={handleDownload}>
-              <Download size={18} />
-              Download
+            {result.certificateId && result.editable && (
+              <button className="btn-action btn-adjust-portrait" title="調整肖像照" onClick={() => setEditingPortrait(true)}>
+                <SlidersHorizontal className="result-desktop" size={16} aria-hidden="true" />
+                <Pencil className="result-mobile" size={22} aria-hidden="true" />
+                <span className="result-desktop">調整肖像照</span>
+                <span className="result-mobile">編輯</span>
+              </button>
+            )}
+            <button className="btn-action btn-download" title="下載海報" onClick={handleDownload} disabled={!posterReady}>
+              <Download size={16} aria-hidden="true" />
+              <span className="result-desktop">下載</span>
+              <span className="result-mobile">儲存</span>
             </button>
-            <button className="btn-action btn-view" onClick={() => window.open(`${API_URL}/user/preview/${result.certificateFile}?t=${result.timestamp}`, '_blank')}>
-              <Eye size={18} />
-              View Full Size
+            <button className="btn-action btn-view" title="查看原圖" disabled={!posterReady} onClick={() => window.open(`${API_URL}/user/preview/${result.certificateFile}?t=${result.timestamp}`, '_blank')}>
+              <Eye size={16} aria-hidden="true" />
+              <span className="result-desktop">查看原圖</span>
+              <span className="result-mobile">查看</span>
             </button>
-            <button className="btn-action btn-new" onClick={handleNewCertificate}>
-              <RefreshCw size={18} />
-              Generate Another
+            <button className="btn-action btn-new" title="返回首頁" onClick={handleNewCertificate}>
+              <RefreshCw className="result-desktop" size={16} aria-hidden="true" />
+              <LogOut className="result-mobile" size={22} aria-hidden="true" />
+              <span className="result-desktop">再產生一張</span>
+              <span className="result-mobile">離開</span>
             </button>
           </div>
         </div>
+      )}
+
+      {editingPortrait && result?.certificateId && (
+        <PortraitEditor certificateId={result.certificateId} onClose={() => setEditingPortrait(false)} onSaved={data => {
+          setPosterReady(false);
+          setResult(current => ({ ...current, certificateFile: data.certificate_file, timestamp: Date.now(), edited: true }));
+          setEditingPortrait(false);
+        }} />
       )}
 
       {/* Fullscreen Camera Modal */}
@@ -567,12 +624,12 @@ function UserPortalNew() {
             />
             <div className="camera-modal-controls">
               <button className="camera-modal-btn cancel" onClick={stopCamera}>
-                Cancel
+                取消
               </button>
-              <button className="camera-modal-btn flip" onClick={flipCamera} title="Flip Camera">
+              <button className="camera-modal-btn flip" onClick={flipCamera} title="切換相機">
                 <SwitchCamera size={24} />
               </button>
-              <button className="camera-modal-btn capture" onClick={capturePhoto}>
+              <button className="camera-modal-btn capture" aria-label="拍照" onClick={capturePhoto}>
                 <div className="capture-ring">
                   <div className="capture-inner"></div>
                 </div>

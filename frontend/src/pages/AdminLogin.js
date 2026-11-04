@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Lock, User } from 'lucide-react';
 import './AdminLogin.css';
+import api, { API_URL, errorMessage } from '../api';
 
-function AdminLogin({ onLogin }) {
+function AdminLogin() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -15,20 +16,12 @@ function AdminLogin({ onLogin }) {
     setError('');
     setLoading(true);
 
-    // Simple authentication (you can replace with backend API call)
-    // For now, using hardcoded credentials
-    if (username === 'admin' && password === 'admin123') {
-      // Store auth token in localStorage
-      localStorage.setItem('adminAuth', 'true');
-      localStorage.setItem('adminUsername', username);
-
-      // Call parent onLogin callback
-      onLogin();
-
-      // Redirect to admin dashboard
+    try {
+      await api.post(`${API_URL}/auth/login`, { username, password });
       navigate('/admin');
-    } else {
-      setError('Invalid username or password');
+    } catch (error) {
+      setError(errorMessage(error, "無法登入，請重試。"));
+    } finally {
       setLoading(false);
     }
   };
@@ -38,26 +31,27 @@ function AdminLogin({ onLogin }) {
       <div className="admin-login-card">
         <div className="admin-login-header">
           <img
-            src="/prudential/PRU_logo_black.png"
-            alt="Prudential Logo"
+            src={`${process.env.PUBLIC_URL}/PRU_logo_black.png`}
+            alt="保誠標誌"
             className="admin-login-logo"
           />
-          <h1 className="admin-login-title">Admin Access</h1>
-          <p className="admin-login-subtitle">MDRT Certificate Generator</p>
+          <h1 className="admin-login-title">管理員登入</h1>
+          <p className="admin-login-subtitle">MDRT 海報產生器</p>
         </div>
 
         <form onSubmit={handleSubmit} className="admin-login-form">
           <div className="admin-form-group">
             <label className="admin-form-label">
               <User size={18} />
-              Username
+              使用者名稱
             </label>
             <input
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="Enter username"
+              placeholder="請輸入使用者名稱"
               className="admin-form-input"
+              autoComplete="username"
               required
               autoFocus
             />
@@ -66,13 +60,14 @@ function AdminLogin({ onLogin }) {
           <div className="admin-form-group">
             <label className="admin-form-label">
               <Lock size={18} />
-              Password
+              密碼
             </label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter password"
+              autoComplete="current-password"
+              placeholder="請輸入密碼"
               className="admin-form-input"
               required
             />
@@ -83,7 +78,7 @@ function AdminLogin({ onLogin }) {
             className="admin-login-button"
             disabled={loading}
           >
-            {loading ? 'Signing in...' : 'Sign In'}
+            {loading ? "正在登入…" : "登入"}
           </button>
 
           {error && (
@@ -93,14 +88,7 @@ function AdminLogin({ onLogin }) {
           )}
         </form>
 
-        <div className="admin-login-footer">
-          <p className="admin-login-footer-title">Default Credentials</p>
-          <div className="admin-login-credentials">
-            <span className="admin-credential-item">Username: admin</span>
-            <span className="admin-credential-divider">|</span>
-            <span className="admin-credential-item">Password: admin123</span>
-          </div>
-        </div>
+
       </div>
     </div>
   );

@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom';
 import AdminDashboard from './pages/AdminDashboard';
 import UserPortalNew from './pages/UserPortalNew';
 import AdminLogin from './pages/AdminLogin';
 import CertificateHistory from './pages/CertificateHistory';
+import MasterDataHistory from './pages/MasterDataHistory';
 import './App.css';
+import { getSession } from './api';
 
 // 404 Not Found Component
 function NotFound() {
@@ -26,11 +28,11 @@ function NotFound() {
         width: '100%',
         textAlign: 'center'
       }}>
-        <img src="/prudential/PRU_logo_black.png" alt="Prudential" style={{ height: '48px', marginBottom: '24px' }} />
+        <img src={`${process.env.PUBLIC_URL}/PRU_logo_black.png`} alt="保誠" style={{ height: '48px', marginBottom: '24px' }} />
         <h1 style={{ fontSize: '72px', color: '#ef4444', marginBottom: '16px', fontWeight: 'bold' }}>404</h1>
-        <h2 style={{ fontSize: '24px', color: '#1f2937', marginBottom: '12px' }}>Page Not Found</h2>
+        <h2 style={{ fontSize: '24px', color: '#1f2937', marginBottom: '12px' }}>找不到頁面</h2>
         <p style={{ color: '#6b7280', marginBottom: '32px' }}>
-          The page you're looking for doesn't exist.
+          您要瀏覽的頁面不存在。
         </p>
         <Link to="/" style={{
           display: 'inline-block',
@@ -42,35 +44,35 @@ function NotFound() {
           fontWeight: '600',
           transition: 'all 0.3s'
         }}>
-          Go to User Portal
+          前往使用者入口
         </Link>
       </div>
     </div>
   );
 }
 
-const API_URL = '/prudential-api';
-
-// Protected Route Component
 function ProtectedRoute({ children }) {
-  const isAuthenticated = localStorage.getItem('adminAuth') === 'true';
-  return isAuthenticated ? children : <Navigate to="/admin/login" replace />;
+  const [state, setState] = useState('loading');
+  useEffect(() => {
+    let active = true;
+    const expire = () => setState('anonymous');
+    window.addEventListener('prudential-auth-expired', expire);
+    getSession(true).then(data => {
+      if (active) setState(data.authenticated ? 'authenticated' : 'anonymous');
+    }).catch(() => { if (active) setState('error'); });
+    return () => { active = false; window.removeEventListener('prudential-auth-expired', expire); };
+  }, []);
+  if (state === 'loading') return <p role="status">正在驗證登入狀態…</p>;
+  if (state === 'error') return <p role="alert">無法驗證登入狀態。 <button onClick={() => window.location.reload()}>重試</button></p>;
+  return state === 'authenticated' ? children : <Navigate to="/admin/login" replace />;
 }
 
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(
-    localStorage.getItem('adminAuth') === 'true'
-  );
-
-  const handleLogin = () => {
-    setIsAuthenticated(true);
-  };
-
   return (
-    <Router basename="/prudential">
+    <Router basename={process.env.PUBLIC_URL || '/'}>
       <Routes>
         <Route path="/" element={<UserPortalNew />} />
-        <Route path="/admin/login" element={<AdminLogin onLogin={handleLogin} />} />
+        <Route path="/admin/login" element={<AdminLogin />} />
         <Route
           path="/admin"
           element={
@@ -84,6 +86,14 @@ function App() {
           element={
             <ProtectedRoute>
               <CertificateHistory />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/master-data-history"
+          element={
+            <ProtectedRoute>
+              <MasterDataHistory />
             </ProtectedRoute>
           }
         />

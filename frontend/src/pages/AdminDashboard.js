@@ -1,17 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
-import { Upload, Eye, LogOut, Bell, User as UserIcon, History } from 'lucide-react';
+import axios, { API_URL, logout, errorMessage } from '../api';
+import { Upload, Eye, LogOut, User as UserIcon, History } from 'lucide-react';
 import './AdminDashboard.css';
 
-const API_URL = '/prudential-api';
 
 function AdminDashboard() {
   const navigate = useNavigate();
+  const [error, setError] = useState(null);
   const [assetStatus, setAssetStatus] = useState(null);
   const [uploading, setUploading] = useState({});
   const [previewImage, setPreviewImage] = useState(null);
-  const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [selectedCSVFile, setSelectedCSVFile] = useState(null);
   const [imageTimestamp, setImageTimestamp] = useState(Date.now());
 
@@ -24,13 +23,13 @@ function AdminDashboard() {
       const response = await axios.get(`${API_URL}/admin/status`);
       setAssetStatus(response.data);
     } catch (error) {
-      console.error('Failed to fetch asset status:', error);
+      setError(errorMessage(error));
     }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('adminAuth');
-    localStorage.removeItem('adminUsername');
+  const handleLogout = async () => {
+    try { await logout(); }
+    catch (error) { setError(errorMessage(error)); return; }
     navigate('/admin/login');
   };
 
@@ -38,13 +37,14 @@ function AdminDashboard() {
     const formData = new FormData();
     formData.append(tier, file);
 
+    setError(null);
     setUploading(prev => ({ ...prev, [tier]: true }));
     try {
       await axios.post(`${API_URL}/admin/upload-backgrounds`, formData);
       setImageTimestamp(Date.now()); // Force image refresh only after upload
       await fetchAssetStatus();
     } catch (error) {
-      console.error('Upload failed:', error);
+      setError(errorMessage(error));
     } finally {
       setUploading(prev => ({ ...prev, [tier]: false }));
     }
@@ -54,13 +54,14 @@ function AdminDashboard() {
     const formData = new FormData();
     formData.append(badgeType, file);
 
+    setError(null);
     setUploading(prev => ({ ...prev, [badgeType]: true }));
     try {
       await axios.post(`${API_URL}/admin/upload-badges`, formData);
       setImageTimestamp(Date.now()); // Force image refresh only after upload
       await fetchAssetStatus();
     } catch (error) {
-      console.error('Upload failed:', error);
+      setError(errorMessage(error));
     } finally {
       setUploading(prev => ({ ...prev, [badgeType]: false }));
     }
@@ -70,15 +71,33 @@ function AdminDashboard() {
     const formData = new FormData();
     formData.append(tier, file);
 
+    setError(null);
     setUploading(prev => ({ ...prev, [tier + '_nametag']: true }));
     try {
       await axios.post(`${API_URL}/admin/upload-nametags`, formData);
       setImageTimestamp(Date.now()); // Force image refresh only after upload
       await fetchAssetStatus();
     } catch (error) {
-      console.error('Upload failed:', error);
+      setError(errorMessage(error));
     } finally {
       setUploading(prev => ({ ...prev, [tier + '_nametag']: false }));
+    }
+  };
+
+  const handleLayerUpload = async (tier, file) => {
+    const formData = new FormData();
+    formData.append(tier, file);
+
+    setError(null);
+    setUploading(prev => ({ ...prev, [tier + '_layer']: true }));
+    try {
+      await axios.post(`${API_URL}/admin/upload-layers`, formData);
+      setImageTimestamp(Date.now()); // Force image refresh only after upload
+      await fetchAssetStatus();
+    } catch (error) {
+      setError(errorMessage(error));
+    } finally {
+      setUploading(prev => ({ ...prev, [tier + '_layer']: false }));
     }
   };
 
@@ -86,13 +105,14 @@ function AdminDashboard() {
     const formData = new FormData();
     formData.append('csv', file);
 
+    setError(null);
     setUploading(prev => ({ ...prev, csv: true }));
     try {
-      const response = await axios.post(`${API_URL}/admin/upload-csv`, formData);
+      await axios.post(`${API_URL}/admin/upload-csv`, formData);
       fetchAssetStatus();
       // CSV uploaded successfully
     } catch (error) {
-      console.error('Upload failed:', error);
+      setError(errorMessage(error));
     } finally {
       setUploading(prev => ({ ...prev, csv: false }));
     }
@@ -104,19 +124,7 @@ function AdminDashboard() {
       fetchAssetStatus();
       // CSV deleted successfully
     } catch (error) {
-      console.error('Delete failed:', error);
-    }
-  };
-
-  const handleResetDatabase = async () => {
-    try {
-      await axios.post(`${API_URL}/admin/reset-database`);
-      setImageTimestamp(Date.now()); // Force image refresh after reset
-      await fetchAssetStatus();
-      setShowResetConfirm(false);
-      // Database reset successfully
-    } catch (error) {
-      console.error('Reset failed:', error);
+      setError(errorMessage(error));
     }
   };
 
@@ -129,7 +137,7 @@ function AdminDashboard() {
     };
 
     const previewUrl = currentFile ? `${API_URL}/admin/preview-asset/${assetType}/${filename}?t=${imageTimestamp}` : null;
-    const buttonText = isUploading ? 'Uploading...' : (currentFile ? 'Change File' : 'Upload File');
+    const buttonText = isUploading ? "正在上傳…" : (currentFile ? "更換檔案" : "上傳檔案");
 
     const handlePreviewClick = () => {
       if (previewUrl) {
@@ -145,6 +153,7 @@ function AdminDashboard() {
             <input
               type="file"
               accept="image/png,image/jpeg"
+              disabled={isUploading}
               onChange={handleFileSelect}
               id={`upload-${assetType}-${filename}`}
               style={{ display: 'none' }}
@@ -157,7 +166,7 @@ function AdminDashboard() {
             </label>
           </div>
           {previewUrl && (
-            <div className="mini-preview" onClick={handlePreviewClick} title="Click to view full size">
+            <div className="mini-preview" onClick={handlePreviewClick} title="點擊查看原圖">
               <img src={previewUrl} alt={title} />
               <div className="preview-overlay">
                 <Eye size={20} />
@@ -174,40 +183,42 @@ function AdminDashboard() {
       {/* Sidebar */}
       <div className="admin-sidebar">
         <div className="sidebar-logo">
-          <img src="/prudential/PRU_logo_white_RGB_v1%201.png" alt="Prudential" />
+          <img src={`${process.env.PUBLIC_URL}/PRU_logo_white_RGB_v1%201.png`} alt="保誠" />
         </div>
         
         <nav className="sidebar-nav">
           <a href="/prudential/" className="nav-item">
             <UserIcon size={20} />
-            <span>User Portal</span>
+            <span>使用者入口</span>
           </a>
           <a href="/prudential/admin" className="nav-item active">
             <Upload size={20} />
-            <span>Admin Dashboard</span>
+            <span>管理員控制台</span>
           </a>
           <a href="/prudential/history" className="nav-item">
             <History size={20} />
-            <span>Certificate History</span>
+            <span>海報紀錄</span>
+          </a>
+          <a href="/prudential/master-data-history" className="nav-item">
+            <History size={20} />
+            <span>主資料上傳紀錄</span>
           </a>
         </nav>
 
         <button className="logout-button" onClick={handleLogout}>
           <LogOut size={18} />
-          <span>Logout</span>
+          <span>登出</span>
         </button>
       </div>
 
       {/* Main Content */}
       <div className="admin-main">
+          {error && <div className="request-error" role="alert">{error}</div>}
         <div className="admin-header-bar">
           <div>
-            <h1 className="page-title">Admin Dashboard</h1>
-            <p className="page-subtitle">Manage Master Assets For MDRT Certificate Generator</p>
+            <h1 className="page-title">管理員控制台</h1>
+            <p className="page-subtitle">管理 MDRT 海報產生器的主要素材</p>
           </div>
-          <button className="notification-btn">
-            <Bell size={20} />
-          </button>
         </div>
 
         <div className="admin-content-area">
@@ -218,7 +229,7 @@ function AdminDashboard() {
                 <Upload size={20} />
               </div>
               <div className="status-card-content">
-                <h3>Backgrounds</h3>
+                <h3>背景圖片</h3>
                 <div className="status-items">
                   {assetStatus?.backgrounds?.COT && <span className="status-check">✓COT</span>}
                   {assetStatus?.backgrounds?.MDRT && <span className="status-check">✓MDRT</span>}
@@ -232,7 +243,7 @@ function AdminDashboard() {
                 <Upload size={20} />
               </div>
               <div className="status-card-content">
-                <h3>Badges</h3>
+                <h3>徽章</h3>
                 <div className="status-items">
                   {assetStatus?.badges?.HR && <span className="status-check">✓HR</span>}
                   {assetStatus?.badges?.LM && <span className="status-check">✓LM</span>}
@@ -246,11 +257,25 @@ function AdminDashboard() {
                 <Upload size={20} />
               </div>
               <div className="status-card-content">
-                <h3>Name Tags</h3>
+                <h3>名牌</h3>
                 <div className="status-items">
                   {assetStatus?.nametags?.MDRT && <span className="status-check">✓MDRT</span>}
                   {assetStatus?.nametags?.COT && <span className="status-check">✓COT</span>}
                   {assetStatus?.nametags?.TOT && <span className="status-check">✓TOT</span>}
+                </div>
+              </div>
+            </div>
+
+            <div className="status-card">
+              <div className="status-card-icon backgrounds-icon">
+                <Upload size={20} />
+              </div>
+              <div className="status-card-content">
+                <h3>圖層</h3>
+                <div className="status-items">
+                  {assetStatus?.layers?.MDRT && <span className="status-check">✓MDRT</span>}
+                  {assetStatus?.layers?.COT && <span className="status-check">✓COT</span>}
+                  {assetStatus?.layers?.TOT && <span className="status-check">✓TOT</span>}
                 </div>
               </div>
             </div>
@@ -263,11 +288,11 @@ function AdminDashboard() {
                 </svg>
               </div>
               <div className="status-card-content">
-                <h3>Master CSV</h3>
+                <h3>主資料 CSV 檔案</h3>
                 <div className="status-items">
-                  {assetStatus?.csv && <span className="status-check">✓Data File</span>}
+                  {assetStatus?.csv && <span className="status-check">✓資料檔案</span>}
                   {assetStatus?.csv_info && (
-                    <span className="agent-count">{assetStatus.csv_info.total_agents} Agents</span>
+                    <span className="agent-count">{assetStatus.csv_info.total_agents} 位代理人</span>
                   )}
                 </div>
               </div>
@@ -282,10 +307,10 @@ function AdminDashboard() {
                   <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
                   <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>
                 </svg>
-                Master CSV Data
+                主資料 CSV 數據
               </h2>
             </div>
-            <p className="section-desc">Upload the master CSV file with all agent information</p>
+            <p className="section-desc">上傳 CSV 或 Excel 檔案，以新增或更新代理人資料。未列於上傳檔案的代理人資料將維持不變。</p>
 
             {assetStatus?.csv_info && (
               <div className="csv-preview-box">
@@ -298,33 +323,33 @@ function AdminDashboard() {
                     <div className="csv-filename">
                       {assetStatus.csv_info.filename || 'data.csv'}
                     </div>
-                    <div className="csv-agent-count">{assetStatus.csv_info.total_agents} agents loaded</div>
+                    <div className="csv-agent-count">{assetStatus.csv_info.total_agents} 位代理人已載入</div>
                   </div>
                   <button className="btn-delete-csv" onClick={handleDeleteCSV}>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
                     </svg>
-                    Delete
+                    刪除
                   </button>
                 </div>
 
                 {assetStatus.csv_info.preview && assetStatus.csv_info.preview.length > 0 && (
                   <div className="csv-data-preview">
-                    <h4>Sample Data Preview</h4>
+                    <h4>範例資料預覽</h4>
                     <div className="preview-list">
                       {assetStatus.csv_info.preview.slice(0, 6).map((agent, idx) => (
                         <div key={idx} className="preview-item">
                           <span className="preview-code">
-                            {agent['Client Cd'] || agent.client_code || 'N/A'}
+                            {agent['Client Cd'] || agent.client_code || "不適用"}
                           </span>
                           <span className="preview-name">
-                            {agent['Agent Name'] || agent.agent_name || 'Unknown'} - {agent['MDRT Title'] || agent.mdrt_tier || 'N/A'}
+                            {agent['Agent Name'] || agent.agent_name || "不詳"} - {agent['MDRT Title'] || agent.mdrt_tier || "不適用"}
                           </span>
                         </div>
                       ))}
                       {assetStatus.csv_info.total_agents > 6 && (
                         <div className="preview-more">
-                          And {assetStatus.csv_info.total_agents - 6} more agents
+                          另有 {assetStatus.csv_info.total_agents - 6} 位代理人
                         </div>
                       )}
                     </div>
@@ -336,12 +361,12 @@ function AdminDashboard() {
             <div className="csv-upload-area">
               <input
                 type="file"
-                accept=".csv"
+                accept=".csv,.xlsx,.xls"
                 onChange={(e) => {
                   const file = e.target.files[0];
                   if (file) {
                     // If no CSV exists yet, upload automatically (first time)
-                    // Otherwise, store file and show "Replace CSV" button
+                    // Otherwise, store file and show "Merge Master Data" button
                     if (!assetStatus || !assetStatus.csv) {
                       handleCSVUpload(file);
                       e.target.value = ''; // Reset input
@@ -354,18 +379,18 @@ function AdminDashboard() {
                 style={{ display: 'none' }}
               />
               <label htmlFor="csv-upload" className="file-input-label">
-                {uploading.csv ? 'Uploading...' : 'Choose File'}
+                {uploading.csv ? "正在上傳…" : "選擇檔案"}
               </label>
               <span className="file-input-text">
                 {uploading.csv
-                  ? 'Uploading CSV...'
+                  ? "正在上傳…"
                   : selectedCSVFile
                     ? selectedCSVFile.name
-                    : (assetStatus && assetStatus.csv ? 'Select new CSV file' : 'Select a CSV file to upload')}
+                    : (assetStatus && assetStatus.csv ? "選擇新的 CSV 或 Excel 檔案" : "選擇要上傳的 CSV 或 Excel 檔案")}
               </span>
             </div>
 
-            {/* Show Replace CSV button only when CSV exists and new file is selected */}
+            {/* Show Merge Master Data button only when CSV exists and new file is selected */}
             {assetStatus && assetStatus.csv && selectedCSVFile && (
               <button
                 className="btn-upload-csv"
@@ -376,7 +401,7 @@ function AdminDashboard() {
                 }}
                 disabled={uploading.csv}
               >
-                {uploading.csv ? 'Uploading...' : 'Replace CSV'}
+                {uploading.csv ? "正在上傳…" : "合併主資料"}
               </button>
             )}
           </div>
@@ -386,15 +411,15 @@ function AdminDashboard() {
             <div className="section-header">
               <h2 className="section-title">
                 <Upload size={20} className="section-icon" />
-                Tier Backgrounds
+                級別背景圖片
               </h2>
-              <button className="btn-upload-all">Upload Backgrounds</button>
+              <button className="btn-upload-all">上傳背景圖片</button>
             </div>
-            <p className="section-desc">Upload background images for each MDRT tier</p>
+            <p className="section-desc">上傳各 MDRT 級別的背景圖片</p>
 
             <div className="upload-grid">
               <FileUploadBox
-                title="MDRT Background"
+                title="MDRT 背景圖片"
                 currentFile={assetStatus?.backgrounds?.MDRT}
                 onUpload={(file) => handleBackgroundUpload('MDRT', file)}
                 isUploading={uploading.MDRT}
@@ -402,7 +427,7 @@ function AdminDashboard() {
                 filename="MDRT.png"
               />
               <FileUploadBox
-                title="COT Background"
+                title="COT 背景圖片"
                 currentFile={assetStatus?.backgrounds?.COT}
                 onUpload={(file) => handleBackgroundUpload('COT', file)}
                 isUploading={uploading.COT}
@@ -410,11 +435,50 @@ function AdminDashboard() {
                 filename="COT.png"
               />
               <FileUploadBox
-                title="TOT Background"
+                title="TOT 背景圖片"
                 currentFile={assetStatus?.backgrounds?.TOT}
                 onUpload={(file) => handleBackgroundUpload('TOT', file)}
                 isUploading={uploading.TOT}
                 assetType="background"
+                filename="TOT.png"
+              />
+            </div>
+          </div>
+
+          {/* Tier Layers Section */}
+          <div className="content-section">
+            <div className="section-header">
+              <h2 className="section-title">
+                <Upload size={20} className="section-icon" />
+                級別圖層
+              </h2>
+              <button className="btn-upload-all">上傳圖層</button>
+            </div>
+            <p className="section-desc">上傳各 MDRT 級別的疊加圖層圖片（顯示於代理人照片之上、名牌之下）</p>
+
+            <div className="upload-grid">
+              <FileUploadBox
+                title="MDRT 圖層"
+                currentFile={assetStatus?.layers?.MDRT}
+                onUpload={(file) => handleLayerUpload('MDRT', file)}
+                isUploading={uploading.MDRT_layer}
+                assetType="layer"
+                filename="MDRT.png"
+              />
+              <FileUploadBox
+                title="COT 圖層"
+                currentFile={assetStatus?.layers?.COT}
+                onUpload={(file) => handleLayerUpload('COT', file)}
+                isUploading={uploading.COT_layer}
+                assetType="layer"
+                filename="COT.png"
+              />
+              <FileUploadBox
+                title="TOT 圖層"
+                currentFile={assetStatus?.layers?.TOT}
+                onUpload={(file) => handleLayerUpload('TOT', file)}
+                isUploading={uploading.TOT_layer}
+                assetType="layer"
                 filename="TOT.png"
               />
             </div>
@@ -425,15 +489,15 @@ function AdminDashboard() {
             <div className="section-header">
               <h2 className="section-title">
                 <Upload size={20} className="section-icon" />
-                Achievement Badges
+                成就徽章
               </h2>
-              <button className="btn-upload-all">Upload Badges</button>
+              <button className="btn-upload-all">上傳徽章</button>
             </div>
-            <p className="section-desc">Upload badge images for achievements</p>
+            <p className="section-desc">上傳成就徽章圖片</p>
 
             <div className="upload-grid">
               <FileUploadBox
-                title="Life Member"
+                title="終身會員"
                 currentFile={assetStatus?.badges?.LM}
                 onUpload={(file) => handleBadgeUpload('LM', file)}
                 isUploading={uploading.LM}
@@ -441,7 +505,7 @@ function AdminDashboard() {
                 filename="LM.png"
               />
               <FileUploadBox
-                title="Honor Roll"
+                title="榮譽榜"
                 currentFile={assetStatus?.badges?.HR}
                 onUpload={(file) => handleBadgeUpload('HR', file)}
                 isUploading={uploading.HR}
@@ -449,7 +513,7 @@ function AdminDashboard() {
                 filename="HR.png"
               />
               <FileUploadBox
-                title="Quarter Century"
+                title="四分之一世紀會員"
                 currentFile={assetStatus?.badges?.QC}
                 onUpload={(file) => handleBadgeUpload('QC', file)}
                 isUploading={uploading.QC}
@@ -464,15 +528,15 @@ function AdminDashboard() {
             <div className="section-header">
               <h2 className="section-title">
                 <Upload size={20} className="section-icon" />
-                Name Tag Banners
+                名牌橫幅
               </h2>
-              <button className="btn-upload-all">Upload Name Tags</button>
+              <button className="btn-upload-all">上傳名牌</button>
             </div>
-            <p className="section-desc">Upload name tag banner images for each MDRT tier</p>
+            <p className="section-desc">上傳各 MDRT 級別的名牌橫幅圖片</p>
 
             <div className="upload-grid">
               <FileUploadBox
-                title="MDRT Name Tag"
+                title="MDRT 名牌"
                 currentFile={assetStatus?.nametags?.MDRT}
                 onUpload={(file) => handleNametagUpload('MDRT', file)}
                 isUploading={uploading.MDRT_nametag}
@@ -480,7 +544,7 @@ function AdminDashboard() {
                 filename="MDRT.png"
               />
               <FileUploadBox
-                title="COT Name Tag"
+                title="COT 名牌"
                 currentFile={assetStatus?.nametags?.COT}
                 onUpload={(file) => handleNametagUpload('COT', file)}
                 isUploading={uploading.COT_nametag}
@@ -488,7 +552,7 @@ function AdminDashboard() {
                 filename="COT.png"
               />
               <FileUploadBox
-                title="TOT Name Tag"
+                title="TOT 名牌"
                 currentFile={assetStatus?.nametags?.TOT}
                 onUpload={(file) => handleNametagUpload('TOT', file)}
                 isUploading={uploading.TOT_nametag}
@@ -498,25 +562,6 @@ function AdminDashboard() {
             </div>
           </div>
 
-          {/* Reset Database Section */}
-          <div className="content-section">
-            <div className="section-header">
-              <h2 className="section-title reset-title">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                  <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" strokeWidth="2" strokeLinecap="round"/>
-                </svg>
-                Reset Database
-              </h2>
-            </div>
-            <p className="section-desc">Clear all admin assets and agent data. Generated certificates will be preserved for viewing in Certificate History</p>
-
-            <button
-              className="btn-reset"
-              onClick={() => setShowResetConfirm(true)}
-            >
-              Reset Database
-            </button>
-          </div>
         </div>
       </div>
 
@@ -526,7 +571,7 @@ function AdminDashboard() {
           <div className="modal-content preview-modal" onClick={e => e.stopPropagation()}>
             <div className="preview-header">
               <h3>{previewImage.title}</h3>
-              <button className="modal-close" onClick={() => setPreviewImage(null)}>×</button>
+              <button className="modal-close" aria-label="關閉圖片預覽" onClick={() => setPreviewImage(null)}>×</button>
             </div>
             <div className="preview-body">
               <img src={previewImage.url} alt={previewImage.title} />
@@ -535,19 +580,6 @@ function AdminDashboard() {
         </div>
       )}
 
-      {/* Reset Confirmation Modal */}
-      {showResetConfirm && (
-        <div className="modal-overlay" onClick={() => setShowResetConfirm(false)}>
-          <div className="confirm-modal" onClick={e => e.stopPropagation()}>
-            <h3>Confirm Reset</h3>
-            <p>Are you sure you want to reset the database? This will clear all admin assets and agent data.</p>
-            <div className="modal-actions">
-              <button className="btn-cancel" onClick={() => setShowResetConfirm(false)}>Cancel</button>
-              <button className="btn-confirm-reset" onClick={handleResetDatabase}>Reset Database</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

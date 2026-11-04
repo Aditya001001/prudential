@@ -1,4 +1,4 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -37,7 +37,6 @@ backend/admin_assets/*.csv
 !backend/admin_assets/badges/.gitkeep
 
 # Test files
-test_*.py
 test_*.png
 test_*.jpg
 test_*.jpeg
@@ -90,3 +89,17 @@ test_result.txt
 20*/
 RGB*/
 Sample*.csv
+
+# Private configuration, credentials, production data and local release artifacts
+*.key
+*.pem
+.env.*
+!backend/.env.example
+.local-backups/
+backend/user_photos/
+backend/admin_assets/csv_history/
+backend/admin_assets/versions/
+frontend/build-staged/
+frontend/build-previous/
+backend/*.db.backup_*
+backend/instance/

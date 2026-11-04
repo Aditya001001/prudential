@@ -1,57 +1,88 @@
-from flask import Flask, request, jsonify, send_file, send_from_directory
-from flask_cors import CORS
+from flask import Flask, request, jsonify, send_file, send_from_directory, session, abort
 import os
+import shutil
 from PIL import Image, ImageDraw, ImageFont
-from rembg import remove, new_session
-import io
+from pathlib import Path
+from uuid import uuid4
+from threading import BoundedSemaphore, Lock
+from werkzeug.exceptions import HTTPException, BadRequest
 from werkzeug.utils import secure_filename
 from datetime import datetime
+from copy import deepcopy
+from config import configure, BASE_DIR
+from security import install_security, require_certificate_access
+from storage import validated_image, safe_path, atomic_image_save, fingerprint, staged_delete
+from nametag_layout import fit_nametag
 
-# Pre-load rembg AI model session for faster processing
-# Using u2net_human_seg model - optimized for people/portraits (MUCH FASTER!)
-# This prevents model reload on every request (saves 30-60 seconds!)
-print("[STARTUP] Loading rembg AI model session (u2net_human_seg - fast model for people)...")
-REMBG_SESSION = new_session("u2net_human_seg")
-print("[STARTUP] rembg AI model loaded and ready!")
+from portrait_editor import (
+    create_layers, discard_layers, layer_paths, compose, render_saved_layers, validate_transform,
+)
+
+REMBG_SESSION = None
+MODEL_LOCK = Lock()
+GENERATION_SLOT = BoundedSemaphore(1)
 
 # Database imports
-from database import db, Agent, Certificate, SystemAsset
+from database import db, Agent, Certificate, SystemAsset, CSVUploadHistory
 from db_services import (
-    get_agent_by_client_code, get_agent_by_id, get_all_agents,
-    create_agent, update_agent, delete_agent, search_agents,
-    import_agents_from_csv, create_certificate, get_certificates_by_agent,
-    get_recent_certificates, mark_certificate_downloaded, get_statistics,
-    create_or_update_asset, get_asset, check_system_assets_ready
+    get_agent_by_client_code, get_all_agents, update_agent, delete_agent,
+    import_agents_from_csv, get_recent_certificates, get_statistics,
+    create_or_update_asset, get_asset, create_csv_upload_record,
 )
 
 app = Flask(__name__)
-CORS(app)
-
-# Database configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///mdrt_certificates.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+configure(app)
+if not app.config['SECRET_KEY'] or len(app.config['SECRET_KEY']) < 32 or app.config['SECRET_KEY'].startswith('replace-'):
+    raise RuntimeError('SECRET_KEY is required. See backend/.env.example.')
 db.init_app(app)
+install_security(app)
 
-# Configuration - Dual Architecture
-ADMIN_ASSETS_FOLDER = 'admin_assets'
-USER_UPLOADS_FOLDER = 'user_uploads'
-USER_OUTPUTS_FOLDER = 'user_outputs'
-USER_PHOTOS_FOLDER = 'user_photos'  # Permanent storage for uploaded photos
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'csv'}
+ADMIN_ASSETS_FOLDER = str(BASE_DIR / 'admin_assets')
+USER_UPLOADS_FOLDER = str(BASE_DIR / 'user_uploads')
+USER_OUTPUTS_FOLDER = str(BASE_DIR / 'user_outputs')
+USER_PHOTOS_FOLDER = str(BASE_DIR / 'user_photos')
+for folder in (ADMIN_ASSETS_FOLDER, USER_UPLOADS_FOLDER, USER_OUTPUTS_FOLDER, USER_PHOTOS_FOLDER):
+    Path(folder).mkdir(parents=True, exist_ok=True)
+for folder in ('backgrounds', 'badges', 'nametags', 'layers', 'versions', 'csv_history'):
+    (Path(ADMIN_ASSETS_FOLDER) / folder).mkdir(exist_ok=True)
 
-# Create folder structure
-os.makedirs(ADMIN_ASSETS_FOLDER, exist_ok=True)
-os.makedirs(os.path.join(ADMIN_ASSETS_FOLDER, 'backgrounds'), exist_ok=True)
-os.makedirs(os.path.join(ADMIN_ASSETS_FOLDER, 'badges'), exist_ok=True)
-os.makedirs(os.path.join(ADMIN_ASSETS_FOLDER, 'nametags'), exist_ok=True)
-os.makedirs(USER_UPLOADS_FOLDER, exist_ok=True)
-os.makedirs(USER_OUTPUTS_FOLDER, exist_ok=True)
-os.makedirs(USER_PHOTOS_FOLDER, exist_ok=True)  # For permanent photo storage
 
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
+@app.errorhandler(HTTPException)
+def http_error(error):
+    return jsonify(success=False, error=error.description), error.code
 
-# Reference template dimensions (backgrounds are 1800px wide, varying heights ~3160-3184)
-# We'll use actual background dimensions - NO RESIZING for best quality
+
+@app.errorhandler(Exception)
+def unexpected_error(error):
+    db.session.rollback()
+    app.logger.exception('Request failed')
+    return jsonify(success=False, error='An unexpected error occurred. Please try again.'), 500
+
+
+def asset_path(kind, name):
+    asset = get_asset(kind, name)
+    if asset:
+        candidate = Path(asset.filepath)
+        if not candidate.is_absolute():
+            candidate = BASE_DIR / candidate
+        if candidate.resolve().is_relative_to(Path(ADMIN_ASSETS_FOLDER).resolve()):
+            return str(candidate)
+    folder = {'background': 'backgrounds', 'badge': 'badges', 'nametag': 'nametags', 'layer': 'layers'}[kind]
+    return str(Path(ADMIN_ASSETS_FOLDER) / folder / f'{name}.png')
+
+
+def pagination():
+    try:
+        page = int(request.args.get('page', 1))
+        size = int(request.args.get('per_page', 25))
+    except ValueError:
+        abort(400, description='Invalid pagination.')
+    if page < 1 or size < 1 or size > 100:
+        abort(400, description='Page must be positive; per_page must be 1-100.')
+    return page, size
+
+
+# Output dimensions are stable across templates and uploaded portrait resolutions.
 REFERENCE_WIDTH = 1800
 REFERENCE_HEIGHT = 3184  # Actual background height
 
@@ -65,12 +96,12 @@ POSITION_RATIOS = {
         'height_ratio': 2400 / 3184  # ~0.75 (fills bottom 75% of certificate)
     },
     'name_text': {
-        'x_ratio': 900 / 1800,       # 0.5 (center)
+        'x_ratio': 930 / 1800,       # Small optical offset to align with the banner crest
         'y_ratio': 2750 / 3184,      # ~0.864 (on name tag, moved higher)
-        'font_size_ratio': 120 / 3184,  # ~3.8% font size (larger initial size)
-        'min_font_size_ratio': 60 / 3184,  # ~1.9% minimum font size
+        'font_size_ratio': 170 / 3184,  # ~5.3% font size (bigger initial size)
+        'min_font_size_ratio': 90 / 3184,  # ~2.8% minimum font size
         'color': '#000000',          # Black text (simple, no glow)
-        'max_width_ratio': 0.85,     # Max 85% of name tag width (more space)
+        'max_width_ratio': 0.78,     # Leave room for the left star, right border and 3D text
     },
     'badges': {
         'x_ratio': 30 / 1800,        # 0.017 (closer to left border)
@@ -91,14 +122,7 @@ NEON_COLORS = {
     'MDRT': (100, 200, 255)  # Blue/Cyan
 }
 
-# Initialize database on first run
-with app.app_context():
-    db.create_all()
-
-# ============= HELPER FUNCTIONS =============
-
-def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+# Schema changes are applied explicitly by manage.py migrate.
 
 def get_admin_asset_status():
     """Check which admin assets are uploaded (file-based + database)"""
@@ -106,24 +130,30 @@ def get_admin_asset_status():
         'backgrounds': {},
         'badges': {},
         'nametags': {},
+        'layers': {},
         'csv': False,
         'agent_count': 0
     }
 
     # Check backgrounds (file-based for now, can migrate to DB)
     for tier in ['MDRT', 'COT', 'TOT']:
-        bg_path = os.path.join(ADMIN_ASSETS_FOLDER, 'backgrounds', f'{tier}.png')
+        bg_path = asset_path('background', tier)
         status['backgrounds'][tier] = os.path.exists(bg_path)
 
     # Check badges (file-based for now)
     for badge in ['LM', 'HR', 'QC']:
-        badge_path = os.path.join(ADMIN_ASSETS_FOLDER, 'badges', f'{badge}.png')
+        badge_path = asset_path('badge', badge)
         status['badges'][badge] = os.path.exists(badge_path)
 
     # Check name tags for each tier
     for tier in ['MDRT', 'COT', 'TOT']:
-        nametag_path = os.path.join(ADMIN_ASSETS_FOLDER, 'nametags', f'{tier}.png')
+        nametag_path = asset_path('nametag', tier)
         status['nametags'][tier] = os.path.exists(nametag_path)
+
+    # Check layers for each tier (overlay placed on top of photo, below name tag)
+    for tier in ['MDRT', 'COT', 'TOT']:
+        layer_path = asset_path('layer', tier)
+        status['layers'][tier] = os.path.exists(layer_path)
 
     # Check CSV / Database
     agent_count = Agent.query.count()
@@ -146,56 +176,224 @@ def correct_image_orientation(img):
         print(f"[INFO] No EXIF orientation correction needed: {e}")
     return img
 
-def remove_background(image_path):
+def _lerp_color(c1, c2, t):
+    return (
+        int(c1[0] + (c2[0] - c1[0]) * t),
+        int(c1[1] + (c2[1] - c1[1]) * t),
+        int(c1[2] + (c2[2] - c1[2]) * t),
+    )
+
+
+def _make_vertical_gradient(width, height, stops):
+    """stops: list of (offset 0..1, (r,g,b)) sorted by offset."""
+    gradient = Image.new('RGB', (1, height), stops[0][1])
+    for y in range(height):
+        t = y / max(1, height - 1)
+        # find surrounding stops
+        for i in range(len(stops) - 1):
+            o1, c1 = stops[i]
+            o2, c2 = stops[i + 1]
+            if o1 <= t <= o2:
+                local_t = (t - o1) / max(1e-6, (o2 - o1))
+                gradient.putpixel((0, y), _lerp_color(c1, c2, local_t))
+                break
+    return gradient.resize((width, height))
+
+
+def draw_3d_metallic_text(background, text, font, center_x, center_y, style='name'):
     """
-    Remove background from image using hybrid resolution approach for speed.
+    Render text with a 3D "poster" extrusion effect, matching the client's
+    reference (GPT example 3D text.html):
+      - Face is filled with a near-white/cream vertical gradient with a
+        thin orange stroke outline (paint-order: stroke fill).
+      - A thick orange->deep-red gradient extrusion is drawn beneath the
+        face, offset diagonally (multiple stacked copies) to build up
+        physical depth.
+      - A soft, warm drop shadow sits behind everything.
+      - A glossy white highlight is blended over the upper portion of the
+        face to simulate the glass-like sheen in the reference.
 
-    Strategy:
-    1. Resize image to max 1024px for AI processing (8-12x faster)
-    2. Apply rembg on smaller image
-    3. Upscale result back to original size
+    Args:
+        background: RGBA PIL Image to draw onto (modified in place).
+        text: string to render.
+        font: PIL ImageFont instance.
+        center_x, center_y: pixel coordinates for the center of the text.
+        style: 'top' for the "YEAR + TIER" title line, or 'name' for the
+            agent name line. Each uses the gradient stops from the
+            reference HTML (#topFace/#topExtrude vs #nameFace/#extrude).
 
-    This reduces processing time from 90-120 seconds to 10-15 seconds
-    with minimal quality impact for the final certificate.
+    Returns:
+        (text_width, text_height) of the rendered text bounding box.
     """
-    import time
-    with Image.open(image_path) as img:
-        # Correct orientation first (important for mobile photos!)
-        img = correct_image_orientation(img)
+    from PIL import ImageFilter
 
-        original_size = img.size
-        print(f"[TIMING] Original image size: {original_size}")
+    if style == 'top':
+        face_stops = [
+            (0.0, (255, 248, 233)),   # #fff8e9
+            (0.45, (255, 228, 201)),  # #ffe4c9
+            (1.0, (255, 246, 233)),   # #fff6e9
+        ]
+        extrude_stops = [
+            (0.0, (255, 154, 70)),    # #ff9a46
+            (0.5, (237, 107, 34)),    # #ed6b22
+            (1.0, (177, 43, 8)),      # #b12b08
+        ]
+        stroke_rgb = (195, 66, 17)    # #c34211
+    else:
+        face_stops = [
+            (0.0, (255, 255, 255)),   # #ffffff
+            (0.34, (255, 253, 248)),  # #fffdf8
+            (0.62, (255, 247, 239)),  # #fff7ef
+            (1.0, (255, 255, 255)),   # #ffffff
+        ]
+        extrude_stops = [
+            (0.0, (255, 138, 56)),    # #ff8a38
+            (0.45, (242, 105, 34)),   # #f26922
+            (0.72, (215, 70, 15)),    # #d7460f
+            (1.0, (168, 34, 8)),      # #a82208
+        ]
+        stroke_rgb = (240, 92, 49)    # #f05c31
 
-        # Calculate scale for processing (max dimension = 1024px)
-        max_dim = max(img.size)
-        if max_dim > 1024:
-            scale_factor = 1024 / max_dim
-            process_size = (int(img.size[0] * scale_factor), int(img.size[1] * scale_factor))
-            print(f"[TIMING] Scaling down to: {process_size} (factor: {scale_factor:.3f})")
+    measure_draw = ImageDraw.Draw(background)
+    bbox = measure_draw.textbbox((0, 0), text, font=font)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
 
-            # Resize for faster processing
-            resize_start = time.time()
-            img_resized = img.resize(process_size, Image.Resampling.LANCZOS)
-            print(f"[TIMING] Resize down: {time.time() - resize_start:.2f}s")
+    # Depth of the extrusion scales with the text size so it reads
+    # correctly at both small and large font sizes.
+    depth = max(6, int(text_h * 0.09))
+    stroke_w = max(2, int(text_h * 0.03))
 
-            # Remove background on smaller image (FAST!)
-            ai_start = time.time()
-            no_bg_small = remove(img_resized, session=REMBG_SESSION)
-            print(f"[TIMING] AI background removal (on {process_size}): {time.time() - ai_start:.2f}s")
+    # Padding so shadows/extrusion offsets don't get clipped
+    pad = max(30, text_h // 3) + depth
+    layer_w = text_w + pad * 2
+    layer_h = text_h + pad * 2
 
-            # Upscale result back to original size
-            upscale_start = time.time()
-            no_bg = no_bg_small.resize(original_size, Image.Resampling.LANCZOS)
-            print(f"[TIMING] Upscale to original: {time.time() - upscale_start:.2f}s")
+    # Origin so the glyph's own bbox offset is cancelled out
+    origin_x = pad - bbox[0]
+    origin_y = pad - bbox[1]
 
-            return no_bg.convert("RGBA")
+    # ---- 1. Soft warm drop shadow ----
+    shadow_layer = Image.new('RGBA', (layer_w, layer_h), (0, 0, 0, 0))
+    shadow_draw = ImageDraw.Draw(shadow_layer)
+    shadow_dx, shadow_dy = int(depth * 0.9), int(depth * 1.3)
+    shadow_draw.text(
+        (origin_x + shadow_dx, origin_y + shadow_dy), text, font=font,
+        fill=(93, 10, 0, 130), stroke_width=stroke_w
+    )
+    shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=max(4, depth // 2)))
+
+    # ---- 2. Extrusion (orange -> deep red gradient, stacked diagonal copies) ----
+    extrude_gradient = _make_vertical_gradient(layer_w, layer_h, extrude_stops)
+    extrusion_mask = Image.new('L', (layer_w, layer_h), 0)
+    extrusion_mask_draw = ImageDraw.Draw(extrusion_mask)
+    steps = 6
+    for i in range(steps, 0, -1):
+        offset = int(depth * i / steps)
+        extrusion_mask_draw.text(
+            (origin_x + offset, origin_y + offset), text, font=font,
+            fill=255, stroke_width=stroke_w, stroke_fill=255
+        )
+    extrusion_layer = Image.new('RGBA', (layer_w, layer_h), (0, 0, 0, 0))
+    extrusion_layer.paste(extrude_gradient, (0, 0), extrusion_mask)
+
+    # ---- 2b. Metallic diagonal sheen across the extrusion (brushed-metal look) ----
+    sheen_layer = Image.new('L', (layer_w, layer_h), 0)
+    sheen_draw = ImageDraw.Draw(sheen_layer)
+    # A soft diagonal band of light, repeated a couple of times, drawn as
+    # thick semi-transparent white lines then blurred for a smooth streak.
+    band_w = max(20, int(layer_h * 0.35))
+    for band_offset in (-int(layer_w * 0.15), int(layer_w * 0.55)):
+        sheen_draw.line(
+            [(band_offset, layer_h), (band_offset + layer_h, 0)],
+            fill=255, width=band_w
+        )
+    sheen_layer = sheen_layer.filter(ImageFilter.GaussianBlur(radius=max(6, band_w // 3)))
+    sheen_rgba = Image.new('RGBA', (layer_w, layer_h), (255, 255, 255, 0))
+    sheen_alpha = sheen_layer.point(lambda p: int(p * 0.55))
+    sheen_rgba.putalpha(sheen_alpha)
+    # Clip the sheen to the extrusion silhouette only
+    sheen_masked = Image.new('RGBA', (layer_w, layer_h), (0, 0, 0, 0))
+    sheen_masked.paste(sheen_rgba, (0, 0), extrusion_mask)
+    extrusion_layer = Image.alpha_composite(extrusion_layer, sheen_masked)
+
+    # ---- 3. Face gradient fill (near-white/cream, glossy metal look) ----
+    gradient = _make_vertical_gradient(layer_w, layer_h, face_stops)
+    # Face mask includes the stroke outline so the orange edge shows
+    # around the cream/white fill (paint-order: stroke fill).
+    face_stroke_mask = Image.new('L', (layer_w, layer_h), 0)
+    face_stroke_mask_draw = ImageDraw.Draw(face_stroke_mask)
+    face_stroke_mask_draw.text(
+        (origin_x, origin_y), text, font=font,
+        fill=255, stroke_width=stroke_w, stroke_fill=255
+    )
+    stroke_color_layer = Image.new('RGBA', (layer_w, layer_h), (0, 0, 0, 0))
+    stroke_color_layer.paste((*stroke_rgb, 255), (0, 0, layer_w, layer_h), face_stroke_mask)
+
+    # Fill-only mask (no stroke) for the gradient face on top of the stroke
+    face_fill_mask = Image.new('L', (layer_w, layer_h), 0)
+    face_fill_mask_draw = ImageDraw.Draw(face_fill_mask)
+    face_fill_mask_draw.text((origin_x, origin_y), text, font=font, fill=255)
+    gradient_text = Image.new('RGBA', (layer_w, layer_h), (0, 0, 0, 0))
+    gradient_rgba = gradient.convert('RGBA')
+    gradient_text.paste(gradient_rgba, (0, 0), face_fill_mask)
+
+    # ---- 4. Glossy highlight over the upper portion of the face ----
+    highlight_gradient = _make_vertical_gradient(layer_w, layer_h, [
+        (0.0, (255, 255, 255)),
+        (0.3, (255, 255, 255)),
+        (0.55, (255, 255, 255)),
+        (1.0, (255, 255, 255)),
+    ])
+    highlight_alpha = Image.new('L', (1, layer_h), 0)
+    for y in range(layer_h):
+        t = y / max(1, layer_h - 1)
+        if t <= 0.3:
+            a = int(242 * (1 - (t / 0.3) * 0.42))
+        elif t <= 0.55:
+            local_t = (t - 0.3) / 0.25
+            a = int(140 - local_t * 120)
         else:
-            # Image already small, process normally
-            print(f"[TIMING] Image already small ({original_size}), processing at full resolution")
-            ai_start = time.time()
-            no_bg = remove(img, session=REMBG_SESSION)
-            print(f"[TIMING] AI background removal (full res): {time.time() - ai_start:.2f}s")
-            return no_bg.convert("RGBA")
+            a = 0
+        highlight_alpha.putpixel((0, y), a)
+    highlight_alpha = highlight_alpha.resize((layer_w, layer_h))
+    highlight_layer = Image.new('RGBA', (layer_w, layer_h), (0, 0, 0, 0))
+    highlight_layer.paste(highlight_gradient.convert('RGBA'), (0, 0))
+    highlight_layer.putalpha(highlight_alpha)
+    highlight_masked = Image.new('RGBA', (layer_w, layer_h), (0, 0, 0, 0))
+    highlight_masked.paste(highlight_layer, (0, 0), face_fill_mask)
+
+    # ---- Composite: shadow -> extrusion -> stroke -> face fill -> highlight ----
+    composed = Image.new('RGBA', (layer_w, layer_h), (0, 0, 0, 0))
+    composed = Image.alpha_composite(composed, shadow_layer)
+    composed = Image.alpha_composite(composed, extrusion_layer)
+    composed = Image.alpha_composite(composed, stroke_color_layer)
+    composed = Image.alpha_composite(composed, gradient_text)
+    composed = Image.alpha_composite(composed, highlight_masked)
+
+    paste_x = int(center_x - layer_w / 2)
+    paste_y = int(center_y - layer_h / 2)
+    background.alpha_composite(composed, (paste_x, paste_y))
+
+    return text_w, text_h
+
+
+def remove_background(image_path):
+    global REMBG_SESSION
+    from rembg import remove, new_session
+    with MODEL_LOCK:
+        if REMBG_SESSION is None:
+            REMBG_SESSION = new_session('u2net_human_seg')
+    with Image.open(image_path) as opened:
+        image = correct_image_orientation(opened).convert('RGBA')
+        processing = image.copy()
+        processing.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+        mask = remove(processing, session=REMBG_SESSION, only_mask=True).convert('L')
+        mask = mask.resize(image.size, Image.Resampling.LANCZOS)
+        from PIL import ImageChops
+        image.putalpha(ImageChops.multiply(image.getchannel('A'), mask))
+        return image
+
 
 def draw_neon_text(draw_obj, text, position, font, tier):
     """Draw text with clean neon glow effect based on tier"""
@@ -288,301 +486,155 @@ def admin_get_status():
 
     return jsonify(status)
 
+def upload_assets(kind, names):
+    prepared = []
+    try:
+        unknown = set(request.files) - set(names)
+        if unknown or not request.files:
+            abort(400, description='Provide at least one recognized asset.')
+        for name in names:
+            if name not in request.files:
+                continue
+            image = validated_image(request.files[name])
+            if kind == 'background' and (image.width < 300 or image.height < 300):
+                abort(400, description='Background dimensions must be at least 300 pixels.')
+            path = Path(ADMIN_ASSETS_FOLDER) / 'versions' / f'{kind}_{name}_{uuid4().hex}.png'
+            prepared.append(path)
+            atomic_image_save(image, path)
+            create_or_update_asset(kind, name, path.name, str(path), path.stat().st_size,
+                                   uploaded_by=session['admin'], commit=False)
+        db.session.commit()
+        return jsonify(success=True, uploaded={name: True for name in names if name in request.files})
+    except Exception:
+        db.session.rollback()
+        for path in prepared:
+            path.unlink(missing_ok=True)
+        raise
+
+
 @app.route('/api/admin/upload-backgrounds', methods=['POST'])
 def admin_upload_backgrounds():
-    """Admin: Upload tier background images"""
-    try:
-        files = request.files
-        uploaded = {}
+    return upload_assets('background', ('MDRT', 'COT', 'TOT'))
 
-        print(f"[BACKGROUND UPLOAD] Received files: {list(files.keys())}")
-
-        for tier in ['MDRT', 'COT', 'TOT']:
-            if tier in files:
-                file = files[tier]
-                if file and allowed_file(file.filename):
-                    filename = f"{tier}.png"
-                    filepath = os.path.join(ADMIN_ASSETS_FOLDER, 'backgrounds', filename)
-                    file.save(filepath)
-                    print(f"[BACKGROUND UPLOAD] Saved {tier} to {filepath}")
-
-                    # Track in database
-                    file_size = os.path.getsize(filepath)
-                    create_or_update_asset('background', tier, filename, filepath, file_size)
-                    uploaded[tier] = True
-
-        return jsonify({'success': True, 'uploaded': uploaded})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
 
 @app.route('/api/admin/upload-badges', methods=['POST'])
 def admin_upload_badges():
-    """Admin: Upload badge images"""
-    try:
-        files = request.files
-        uploaded = {}
+    return upload_assets('badge', ('LM', 'HR', 'QC'))
 
-        for badge in ['LM', 'HR', 'QC']:
-            if badge in files:
-                file = files[badge]
-                if file and allowed_file(file.filename):
-                    filename = f"{badge}.png"
-                    filepath = os.path.join(ADMIN_ASSETS_FOLDER, 'badges', filename)
-                    file.save(filepath)
-
-                    # Track in database
-                    file_size = os.path.getsize(filepath)
-                    create_or_update_asset('badge', badge, filename, filepath, file_size)
-                    uploaded[badge] = True
-
-        return jsonify({'success': True, 'uploaded': uploaded})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
 
 @app.route('/api/admin/upload-nametags', methods=['POST'])
 def admin_upload_nametags():
-    """Admin: Upload name tag banner images for each tier (MDRT, COT, TOT)"""
-    try:
-        files = request.files
-        uploaded = {}
+    return upload_assets('nametag', ('MDRT', 'COT', 'TOT'))
 
-        print(f"[NAMETAG UPLOAD] Received files: {list(files.keys())}")
 
-        # Create nametags folder if it doesn't exist
-        nametags_folder = os.path.join(ADMIN_ASSETS_FOLDER, 'nametags')
-        os.makedirs(nametags_folder, exist_ok=True)
+@app.route('/api/admin/upload-layers', methods=['POST'])
+def admin_upload_layers():
+    return upload_assets('layer', ('MDRT', 'COT', 'TOT'))
 
-        for tier in ['MDRT', 'COT', 'TOT']:
-            if tier in files:
-                file = files[tier]
-                if file and allowed_file(file.filename):
-                    filename = f"{tier}.png"
-                    filepath = os.path.join(nametags_folder, filename)
-                    file.save(filepath)
-                    print(f"[NAMETAG UPLOAD] Saved {tier} to {filepath}")
-
-                    # Track in database
-                    file_size = os.path.getsize(filepath)
-                    create_or_update_asset('nametag', tier, filename, filepath, file_size)
-                    uploaded[tier] = True
-
-        print(f"[NAMETAG UPLOAD] Successfully uploaded: {uploaded}")
-        return jsonify({'success': True, 'uploaded': uploaded})
-    except Exception as e:
-        print(f"[NAMETAG UPLOAD ERROR] {str(e)}")
-        return jsonify({'success': False, 'error': str(e)}), 400
 
 @app.route('/api/admin/upload-csv', methods=['POST'])
 def admin_upload_csv():
-    """Admin: Upload master CSV file and import to database"""
+    upload = request.files.get('csv')
+    if not upload or Path(upload.filename or '').suffix.lower() not in {'.csv', '.xlsx', '.xls'}:
+        abort(400, description='Upload a CSV, XLSX or XLS file.')
+    original = secure_filename(upload.filename)
+    path = Path(ADMIN_ASSETS_FOLDER) / 'csv_history' / f'{uuid4().hex}{Path(original).suffix.lower()}'
     try:
-        print(f"[CSV UPLOAD] Request files: {request.files}")
-        print(f"[CSV UPLOAD] Request form: {request.form}")
+        upload.save(path)
+        result = import_agents_from_csv(str(path), commit=False)
+        if not result['success']:
+            db.session.rollback()
+            path.unlink(missing_ok=True)
+            return jsonify(result), 400
+        create_or_update_asset('csv', 'agents_csv', original, str(path), path.stat().st_size,
+                               uploaded_by=session['admin'], commit=False)
+        total = Agent.query.count()
+        create_csv_upload_record(original, path.name, str(path), path.stat().st_size,
+                                 total, result['imported'], result['updated'],
+                                 uploaded_by=session['admin'], commit=False)
+        db.session.commit()
+        return jsonify(**result, total_agents=total)
+    except Exception:
+        db.session.rollback()
+        path.unlink(missing_ok=True)
+        raise
 
-        if 'csv' not in request.files:
-            error_msg = 'No CSV file provided'
-            print(f"[CSV UPLOAD ERROR] {error_msg}")
-            return jsonify({'success': False, 'error': error_msg}), 400
 
-        file = request.files['csv']
-        print(f"[CSV UPLOAD] File received: {file.filename}")
+@app.route('/api/admin/csv-history', methods=['GET'])
+def admin_csv_history():
+    page, size = pagination()
+    query = CSVUploadHistory.query.order_by(CSVUploadHistory.uploaded_at.desc(), CSVUploadHistory.id.desc())
+    total = query.count()
+    return jsonify(success=True, total=total, page=page, per_page=size,
+                   history=[row.to_dict() for row in query.offset((page-1)*size).limit(size).all()])
 
-        if file and allowed_file(file.filename):
-            # Get original filename
-            original_filename = secure_filename(file.filename)
 
-            # Save CSV file with original name
-            filepath = os.path.join(ADMIN_ASSETS_FOLDER, original_filename)
-            file.save(filepath)
+@app.route('/api/admin/csv-history/<int:upload_id>/download', methods=['GET'])
+def admin_csv_history_download(upload_id):
+    record = db.get_or_404(CSVUploadHistory, upload_id)
+    path = Path(record.filepath)
+    if not path.is_absolute():
+        path = BASE_DIR / path
+    if not path.resolve().is_relative_to(Path(ADMIN_ASSETS_FOLDER).resolve()) or not path.is_file():
+        abort(404)
+    return send_file(path, as_attachment=True, download_name=record.original_filename)
 
-            # Get file size
-            file_size = os.path.getsize(filepath) if os.path.exists(filepath) else None
 
-            # Store CSV filename in database for reference
-            create_or_update_asset(
-                asset_type='csv',
-                asset_name='agents_csv',
-                filename=original_filename,
-                filepath=filepath,
-                file_size=file_size
-            )
+@app.route('/api/admin/csv-history/<int:upload_id>', methods=['DELETE'])
+def admin_csv_history_delete(upload_id):
+    record = db.get_or_404(CSVUploadHistory, upload_id)
+    path = Path(record.filepath)
+    if not path.is_absolute():
+        path = BASE_DIR / path
+    if not path.resolve().is_relative_to(Path(ADMIN_ASSETS_FOLDER).resolve()):
+        abort(400)
+    # A history record can also be the active master-file pointer.
+    SystemAsset.query.filter_by(asset_type='csv', filepath=record.filepath).delete()
+    with staged_delete([path]):
+        db.session.delete(record)
+        db.session.commit()
+    return jsonify(success=True)
 
-            # Import to database
-            result = import_agents_from_csv(filepath)
-
-            if result['success']:
-                stats = get_statistics()
-                agents = get_all_agents(limit=10)  # Get first 10 for preview
-
-                # Format preview to match CSV structure for frontend compatibility
-                preview = [
-                    {
-                        'Client Cd': agent.client_code,
-                        'Agent Name': agent.agent_name,
-                        'MDRT Title': agent.mdrt_tier,
-                        'Life Member': 'LM' if agent.life_member else '',
-                        'Honor Roll': 'HR' if agent.honor_roll else '',
-                        'Quarter Century': 'QC' if agent.quarter_century else ''
-                    }
-                    for agent in agents
-                ]
-
-                return jsonify({
-                    'success': True,
-                    'total_agents': stats['total_agents'],
-                    'imported': result['imported'],
-                    'updated': result['updated'],
-                    'preview': preview,
-                    'errors': result['errors'] if result['errors'] else None
-                })
-            else:
-                return jsonify({'success': False, 'error': result['error']}), 400
-
-        error_msg = 'Invalid file'
-        print(f"[CSV UPLOAD ERROR] {error_msg}")
-        return jsonify({'success': False, 'error': error_msg}), 400
-    except Exception as e:
-        print(f"[CSV UPLOAD EXCEPTION] {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 400
 
 @app.route('/api/admin/delete-csv', methods=['DELETE'])
 def admin_delete_csv():
-    """Admin: Delete CSV file and clear all agent data"""
-    try:
-        # Delete all agents from database
-        agent_count = Agent.query.count()
-        Agent.query.delete()
+    # Preserve generated certificates and their immutable snapshots.
+    count = Agent.query.count()
+    Certificate.query.update({Certificate.agent_id: None}, synchronize_session=False)
+    Agent.query.delete(synchronize_session=False)
+    SystemAsset.query.filter_by(asset_type='csv').delete()
+    db.session.commit()
+    return jsonify(success=True, deleted_agents=count,
+                   message='Master data cleared. Certificate and upload history retained.')
 
-        # Delete CSV asset record
-        from database import SystemAsset
-        SystemAsset.query.filter_by(asset_type='csv').delete()
-
-        db.session.commit()
-
-        # Delete CSV files from filesystem
-        deleted_files = []
-        for filename in os.listdir(ADMIN_ASSETS_FOLDER):
-            if filename.endswith('.csv'):
-                filepath = os.path.join(ADMIN_ASSETS_FOLDER, filename)
-                os.remove(filepath)
-                deleted_files.append(filename)
-
-        return jsonify({
-            'success': True,
-            'message': f'CSV deleted. {agent_count} agents removed from database.',
-            'deleted_agents': agent_count,
-            'deleted_files': deleted_files
-        })
-    except Exception as e:
-        db.session.rollback()
-        print(f"[CSV DELETE ERROR] {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 400
 
 @app.route('/api/admin/preview-asset/<asset_type>/<filename>', methods=['GET'])
 def admin_preview_asset(asset_type, filename):
-    """Admin: Preview uploaded assets"""
-    try:
-        # Accept both singular and plural forms
-        if asset_type in ['background', 'backgrounds']:
-            filepath = os.path.join(ADMIN_ASSETS_FOLDER, 'backgrounds', filename)
-        elif asset_type in ['badge', 'badges']:
-            filepath = os.path.join(ADMIN_ASSETS_FOLDER, 'badges', filename)
-        elif asset_type in ['nametag', 'nametags']:
-            filepath = os.path.join(ADMIN_ASSETS_FOLDER, 'nametags', filename)
-        else:
-            return jsonify({'error': 'Invalid asset type'}), 400
+    kinds = {'background': 'background', 'backgrounds': 'background', 'badge': 'badge',
+             'badges': 'badge', 'nametag': 'nametag', 'nametags': 'nametag',
+             'layer': 'layer', 'layers': 'layer'}
+    kind = kinds.get(asset_type)
+    name = Path(filename).stem
+    allowed = ('LM', 'HR', 'QC') if kind == 'badge' else ('MDRT', 'COT', 'TOT')
+    if not kind or name not in allowed or filename != name + '.png':
+        abort(404)
+    path = Path(asset_path(kind, name))
+    if not path.is_file():
+        abort(404)
+    return send_file(path, mimetype='image/png')
 
-        if os.path.exists(filepath):
-            return send_file(filepath)
-        return jsonify({'error': 'File not found'}), 404
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
-
-@app.route('/api/admin/reset-database', methods=['POST'])
-def admin_reset_database():
-    """Admin: Reset admin assets and agent data (keeps generated certificates)"""
-    try:
-        # Count before deletion
-        agent_count = Agent.query.count()
-
-        # Delete all agents (but NOT certificates - they stay as history)
-        Agent.query.delete()
-
-        # Delete all system assets records
-        SystemAsset.query.delete()
-
-        # Commit the database transaction
-        db.session.commit()
-
-        # Delete physical files from admin_assets folder
-        deleted_files = {
-            'backgrounds': [],
-            'badges': [],
-            'csv': False
-        }
-
-        # Delete backgrounds
-        backgrounds_dir = os.path.join(ADMIN_ASSETS_FOLDER, 'backgrounds')
-        if os.path.exists(backgrounds_dir):
-            for filename in os.listdir(backgrounds_dir):
-                if filename.endswith(('.png', '.jpg', '.jpeg')):
-                    filepath = os.path.join(backgrounds_dir, filename)
-                    os.remove(filepath)
-                    deleted_files['backgrounds'].append(filename)
-
-        # Delete badges
-        badges_dir = os.path.join(ADMIN_ASSETS_FOLDER, 'badges')
-        if os.path.exists(badges_dir):
-            for filename in os.listdir(badges_dir):
-                if filename.endswith('.png'):
-                    filepath = os.path.join(badges_dir, filename)
-                    os.remove(filepath)
-                    deleted_files['badges'].append(filename)
-
-        # Delete CSV if exists
-        csv_path = os.path.join(ADMIN_ASSETS_FOLDER, 'master_data.csv')
-        if os.path.exists(csv_path):
-            os.remove(csv_path)
-            deleted_files['csv'] = True
-
-        return jsonify({
-            'success': True,
-            'message': 'Admin assets reset successfully (generated certificates preserved)',
-            'deleted': {
-                'agents': agent_count,
-                'files': deleted_files
-            }
-        })
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 400
-
-# ============= AGENT MANAGEMENT ENDPOINTS =============
 
 @app.route('/api/agents', methods=['GET'])
 def get_agents():
-    """Get all agents or search"""
-    try:
-        search_term = request.args.get('search')
-        limit = request.args.get('limit', type=int)
-        offset = request.args.get('offset', type=int)
+    page, size = pagination()
+    query = Agent.query
+    search = request.args.get('search', '').strip()[:200]
+    if search:
+        query = query.filter(db.or_(Agent.agent_name.icontains(search, autoescape=True),
+                                   Agent.client_code.icontains(search, autoescape=True)))
+    return jsonify(success=True, total=query.count(), page=page, per_page=size,
+                   agents=[agent.to_dict() for agent in query.order_by(Agent.agent_name, Agent.id).offset((page-1)*size).limit(size).all()])
 
-        if search_term:
-            agents = search_agents(search_term)
-        else:
-            agents = get_all_agents(limit=limit, offset=offset)
-
-        return jsonify({
-            'success': True,
-            'agents': [agent.to_dict() for agent in agents],
-            'total': Agent.query.count()
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
 
 @app.route('/api/agents/<client_code>', methods=['GET'])
 def get_agent(client_code):
@@ -595,8 +647,12 @@ def get_agent(client_code):
                 'agent': agent.to_dict()
             })
         return jsonify({'success': False, 'error': 'Agent not found'}), 404
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
+        db.session.rollback()
+        app.logger.exception("Request failed")
+        return jsonify({'success': False, 'error': 'Unable to complete request.'}), 400
 
 @app.route('/api/validate-client-code/<client_code>', methods=['GET'])
 def validate_client_code(client_code):
@@ -615,9 +671,7 @@ def validate_client_code(client_code):
             return jsonify({
                 'success': True,
                 'exists': True,
-                'agent_name': agent.agent_name,
-                'tier': agent.mdrt_tier,
-                'message': f'✓ Found: {agent.agent_name} ({agent.mdrt_tier})'
+                'message': 'Client code found.'
             })
         else:
             return jsonify({
@@ -625,11 +679,15 @@ def validate_client_code(client_code):
                 'exists': False,
                 'message': f'✗ Client code "{client_code}" not found in database'
             })
+    except HTTPException:
+        raise
     except Exception as e:
+        db.session.rollback()
+        app.logger.exception("Request failed")
         return jsonify({
             'success': False,
             'exists': False,
-            'message': f'Error validating client code: {str(e)}'
+            'message': 'Unable to validate client code.'
         }), 400
 
 @app.route('/api/agents/<int:agent_id>', methods=['PUT'])
@@ -644,8 +702,12 @@ def update_agent_endpoint(agent_id):
                 'agent': agent.to_dict()
             })
         return jsonify({'success': False, 'error': 'Agent not found'}), 404
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
+        db.session.rollback()
+        app.logger.exception("Request failed")
+        return jsonify({'success': False, 'error': 'Unable to complete request.'}), 400
 
 @app.route('/api/agents/<int:agent_id>', methods=['DELETE'])
 def delete_agent_endpoint(agent_id):
@@ -655,8 +717,12 @@ def delete_agent_endpoint(agent_id):
         if success:
             return jsonify({'success': True})
         return jsonify({'success': False, 'error': 'Agent not found'}), 404
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
+        db.session.rollback()
+        app.logger.exception("Request failed")
+        return jsonify({'success': False, 'error': 'Unable to complete request.'}), 400
 
 # ============= USER ENDPOINTS =============
 
@@ -671,135 +737,88 @@ def user_check_system():
 
     ready = all_backgrounds and all_badges and has_agents
 
-    return jsonify({
-        'ready': ready,
-        'status': status,
-        'message': 'System ready' if ready else 'Admin must upload all assets and import agents first'
-    })
+    return jsonify(ready=ready, message='System ready' if ready else 'Admin must upload assets and master data.')
 
 @app.route('/api/user/upload-photo', methods=['POST'])
 def user_upload_photo():
-    """User: Upload agent photo and generate certificate"""
+    upload = request.files.get('photo')
+    if not upload:
+        abort(400, description='No photo provided.')
+    client_code = request.form.get('client_code', '').strip()
+    agent = get_agent_by_client_code(client_code)
+    if not agent:
+        abort(404, description='Client code not found.')
+    if not GENERATION_SLOT.acquire(blocking=False):
+        abort(429, description='The generator is busy. Please try again shortly.')
+    paths = []
+    metadata = None
     try:
-        # Get uploaded file
-        if 'photo' not in request.files:
-            return jsonify({'success': False, 'error': 'No photo file provided'}), 400
-
-        file = request.files['photo']
-        if not file or not allowed_file(file.filename):
-            return jsonify({'success': False, 'error': 'Invalid file type'}), 400
-
-        # Get client code from form data (PRIMARY SOURCE)
-        client_code = request.form.get('client_code', '').strip()
-
-        # If not provided in form, fall back to filename (for backward compatibility)
-        if not client_code:
-            filename = secure_filename(file.filename)
-            client_code = os.path.splitext(filename)[0]
-
-        # Find agent in database
-        agent = get_agent_by_client_code(client_code)
-        if not agent:
-            return jsonify({
-                'success': False,
-                'error': f"Client code '{client_code}' not found in database"
-            }), 404
-
-        # Save uploaded photo temporarily with a unique filename
-        original_filename = secure_filename(file.filename)
-        file_extension = os.path.splitext(original_filename)[1]
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        temp_filename = f"{client_code}_{timestamp}{file_extension}"
-        temp_photo_path = os.path.join(USER_UPLOADS_FOLDER, temp_filename)
-        file.save(temp_photo_path)
-
-        # ALSO save to permanent storage for history
-        permanent_photo_filename = f"{client_code}_{timestamp}_original{file_extension}"
-        permanent_photo_path = os.path.join(USER_PHOTOS_FOLDER, permanent_photo_filename)
-
-        # Copy the uploaded file to permanent storage
-        import shutil
-        shutil.copy2(temp_photo_path, permanent_photo_path)
-        photo_file_size = os.path.getsize(permanent_photo_path)
-        print(f"[UPLOAD] Original photo saved permanently: {permanent_photo_filename}")
-
-        # KEEP ALL CERTIFICATES - No deletion needed
-        # Each generation will have a unique timestamp in the filename
-        print(f"[UPLOAD] Generating certificate for {agent.agent_name} (ID: {agent.id})")
-
-        # Generate certificate with timestamp to ensure unique filename
-        cert_filename, cert_path = generate_certificate_for_agent(agent, temp_photo_path)
-        print(f"[UPLOAD] Certificate generated: {cert_filename}")
-
-        # Track certificate in database (keep all history)
-        file_size = os.path.getsize(cert_path)
-        print(f"[UPLOAD] Certificate file size: {file_size} bytes")
-
-        # Create certificate record (keeping all previous generations)
-        from database import Certificate as CertModel
-        certificate = CertModel(
-            agent_id=agent.id,
-            filename=cert_filename,
-            filepath=cert_path,
-            file_size=file_size,
-            original_photo_filename=permanent_photo_filename,
-            original_photo_filepath=permanent_photo_path,
-            original_photo_size=photo_file_size,
-            agent_name_snapshot=agent.agent_name,
-            tier_snapshot=agent.mdrt_tier,
-            badges_snapshot=','.join(agent.get_badges())
-        )
+        image = validated_image(upload)
+        if image.width < 100 or image.height < 100:
+            abort(400, description='Photo must be at least 100 pixels wide and high.')
+        identifier = uuid4().hex
+        temp_path = Path(USER_UPLOADS_FOLDER) / f'{identifier}.png'
+        photo_path = Path(USER_PHOTOS_FOLDER) / f'{identifier}_original.png'
+        paths.extend([temp_path, photo_path])
+        atomic_image_save(image, temp_path)
+        shutil.copyfile(temp_path, photo_path)
+        filename, cert_path, metadata = generate_certificate_for_agent(agent, str(temp_path))
+        paths.append(Path(cert_path))
+        certificate = Certificate(
+            agent_id=agent.id, filename=filename, filepath=cert_path,
+            file_size=Path(cert_path).stat().st_size,
+            original_photo_filename=photo_path.name, original_photo_filepath=str(photo_path),
+            original_photo_size=photo_path.stat().st_size, generated_by=session['owner'],
+            client_code_snapshot=agent.client_code, agent_name_snapshot=agent.agent_name,
+            tier_snapshot=agent.mdrt_tier, badges_snapshot=','.join(agent.get_badges()),
+            render_metadata=metadata)
         db.session.add(certificate)
         db.session.commit()
-        print(f"[UPLOAD] Certificate saved to database with ID: {certificate.id}")
+        return jsonify(success=True, certificate_file=filename,
+                       certificate={'id': certificate.id, 'filename': filename, 'editable': bool(metadata.get('editor'))},
+                       agent_info={'name': agent.agent_name, 'client_code': agent.client_code,
+                                   'tier': agent.mdrt_tier, 'badges': agent.get_badges()})
+    except Exception:
+        db.session.rollback()
+        if metadata:
+            discard_layers(USER_OUTPUTS_FOLDER, metadata.get('editor'))
+        for path in paths:
+            path.unlink(missing_ok=True)
+        raise
+    finally:
+        for path in paths:
+            if path.parent == Path(USER_UPLOADS_FOLDER):
+                path.unlink(missing_ok=True)
+        GENERATION_SLOT.release()
 
-        # Count total generations for this agent
-        from database import Certificate as CertModel
-        total_generations = CertModel.query.filter_by(agent_id=agent.id).count()
-        print(f"[UPLOAD] Total certificates for this agent: {total_generations}")
-
-        # Clean up temp photo (keep permanent one)
-        if os.path.exists(temp_photo_path):
-            os.remove(temp_photo_path)
-
-        print(f"[UPLOAD] Returning response with cert_filename: {cert_filename}")
-        return jsonify({
-            'success': True,
-            'agent_info': {
-                'name': agent.agent_name,
-                'client_code': agent.client_code,
-                'tier': agent.mdrt_tier,
-                'badges': agent.get_badges()
-            },
-            'certificate_file': cert_filename,
-            'certificate': {
-                'id': certificate.id,
-                'filename': cert_filename,
-                'preview_url': f'/api/user/preview/{cert_filename}',
-                'download_url': f'/api/user/download/{cert_filename}'
-            }
-        })
-
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
 
 def generate_certificate_for_agent(agent, photo_path):
     """Generate certificate for an agent"""
     import time
     start_time = time.time()
 
+    assets = {(kind, name): asset_path(kind, name)
+              for kind, names in [('background', ('MDRT','COT','TOT')), ('badge', ('LM','HR','QC')),
+                                   ('nametag', ('MDRT','COT','TOT')), ('layer', ('MDRT','COT','TOT'))]
+              for name in names}
+    def resolved(kind, name):
+        return assets[(kind, name)]
+    metadata = {'renderer_version': 4, 'model': 'u2net_human_seg', 'mask_max_dimension': 1024,
+                'layout': POSITION_RATIOS, 'assets': {f'{k[0]}/{k[1]}':
+                    {'path': v, 'sha256': fingerprint(v)} for k, v in assets.items() if Path(v).is_file()}}
     tier = agent.mdrt_tier
     agent_name = agent.agent_name
 
     print(f"[TIMING] Starting certificate generation for {agent_name}")
 
     # Load tier background
-    bg_path = os.path.join(ADMIN_ASSETS_FOLDER, 'backgrounds', f'{tier}.png')
+    bg_path = resolved('background', tier)
     if not os.path.exists(bg_path):
         raise Exception(f"Background for {tier} not found")
 
     bg_load_start = time.time()
     background = Image.open(bg_path).convert('RGBA')
+    background = background.resize((REFERENCE_WIDTH, REFERENCE_HEIGHT), Image.Resampling.LANCZOS)
     bg_width_original, bg_height_original = background.size
     print(f"[TIMING] Background loaded: {time.time() - bg_load_start:.2f}s")
     print(f"[INFO] Background original size: {bg_width_original}x{bg_height_original}")
@@ -810,71 +829,48 @@ def generate_certificate_for_agent(agent, photo_path):
     agent_img = remove_background(photo_path)
     print(f"[TIMING] Background removal completed: {time.time() - rembg_start:.2f}s")
 
+    # Trim empty transparent margin around the subject before scaling.
+    # Some photos (e.g. wide webcam/laptop shots) have the subject occupying
+    # only a fraction of the frame's width, surrounded by empty background
+    # that was just removed. Without trimming, that empty margin gets
+    # scaled up along with the subject, making the person look small/
+    # zoomed-out even though the overall image "fills" the placeholder box.
+    # This is always safe: it only removes fully-transparent pixels, never
+    # touches the visible person, so nothing is ever cropped/trimmed off
+    # the subject itself. A small padding is kept around the tight bbox to
+    # avoid clipping soft/antialiased edges from background removal.
+    subject_bbox = agent_img.split()[-1].getbbox()
+    if subject_bbox:
+        bx0, by0, bx1, by1 = subject_bbox
+        pad_x = max(4, int((bx1 - bx0) * 0.02))
+        pad_y = max(4, int((by1 - by0) * 0.02))
+        orig_w, orig_h = agent_img.size
+        bx0 = max(0, bx0 - pad_x)
+        by0 = max(0, by0 - pad_y)
+        bx1 = min(orig_w, bx1 + pad_x)
+        by1 = min(orig_h, by1 + pad_y)
+        if (bx0, by0, bx1, by1) != (0, 0, orig_w, orig_h):
+            agent_img = agent_img.crop((bx0, by0, bx1, by1))
+            print(f"[INFO] Trimmed empty transparent margin: {orig_w}x{orig_h} -> {agent_img.size[0]}x{agent_img.size[1]}")
+
     img_w, img_h = agent_img.size
     print(f"[INFO] Agent photo size: {img_w}x{img_h}")
 
-    # DYNAMIC BACKGROUND SCALING (Option 4)
-    # If user photo is very low resolution, scale background down to match
+    if subject_bbox is None:
+        raise BadRequest('No subject detected. Please upload a clearer portrait.')
+    bg_width, bg_height = background.size
     photo_ratios = POSITION_RATIOS['agent_photo']
-    max_width_orig = int(bg_width_original * photo_ratios['width_ratio'])
-    max_height_orig = int(bg_height_original * photo_ratios['height_ratio'])
-
-    # Calculate what scale would be needed for the photo
-    scale_w = max_width_orig / img_w
-    scale_h = max_height_orig / img_h
-    natural_scale = min(scale_w, scale_h)
-
-    # If natural scale > 2.0 (would need heavy upscaling), scale background down instead
-    MAX_UPSCALE = 2.0
-    if natural_scale > MAX_UPSCALE:
-        # Calculate background scale factor to keep photo scaling at MAX_UPSCALE
-        bg_scale_factor = MAX_UPSCALE / natural_scale
-        bg_width = int(bg_width_original * bg_scale_factor)
-        bg_height = int(bg_height_original * bg_scale_factor)
-        background = background.resize((bg_width, bg_height), Image.Resampling.LANCZOS)
-        print(f"[DYNAMIC] Background scaled DOWN to {bg_width}x{bg_height} (scale: {bg_scale_factor:.2f}x)")
-        print(f"[DYNAMIC] Reason: User photo too small ({img_w}x{img_h}), would need {natural_scale:.2f}x upscaling")
-        print(f"[DYNAMIC] Now photo will only be upscaled {MAX_UPSCALE:.2f}x (better quality)")
-    else:
-        # Keep original background size
-        bg_width = bg_width_original
-        bg_height = bg_height_original
-        print(f"[INFO] Using original background size (photo upscaling is {natural_scale:.2f}x, within {MAX_UPSCALE}x limit)")
-
-    # Calculate positions based on (possibly scaled) background dimensions
-    pos_x = int(bg_width * photo_ratios['x_ratio'])
-    pos_y = int(bg_height * photo_ratios['y_ratio'])
     max_width = int(bg_width * photo_ratios['width_ratio'])
     max_height = int(bg_height * photo_ratios['height_ratio'])
-
-    # Calculate final scaling for agent photo
-    scale_w = max_width / img_w
-    scale_h = max_height / img_h
-    scale = min(scale_w, scale_h)
-
-    # Apply scaling (capped at MAX_UPSCALE)
-    if scale < 1:
-        # Image is larger, scale it down to fit
-        new_w = int(img_w * scale)
-        new_h = int(img_h * scale)
-        print(f"[INFO] Scaling down agent photo to {new_w}x{new_h} (scale: {scale:.2f})")
-    else:
-        # Image is smaller, scale it up but cap at MAX_UPSCALE
-        scale = min(scale, MAX_UPSCALE)
-        new_w = int(img_w * scale)
-        new_h = int(img_h * scale)
-        print(f"[INFO] Scaling up agent photo to {new_w}x{new_h} (scale: {scale:.2f})")
-
-    agent_img = agent_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-
-    # Position agent photo: centered horizontally, aligned to bottom vertically
-    paste_x = pos_x - new_w // 2  # Center horizontally
-    paste_y = bg_height - new_h  # Align to bottom (bottom edge of photo touches bottom of background)
+    scale = min(max_width / img_w, max_height / img_h)
+    new_w, new_h = max(1, round(img_w * scale)), max(1, round(img_h * scale))
+    paste_x = (bg_width - new_w) // 2
+    paste_y = bg_height - new_h
 
     print(f"[INFO] Photo positioned at ({paste_x}, {paste_y}), size: {new_w}x{new_h}")
     print(f"[INFO] Photo extends from y={paste_y} to y={paste_y + new_h} (background height: {bg_height})")
 
-    background.paste(agent_img, (paste_x, paste_y), agent_img)
+    foreground = Image.new('RGBA', background.size)
 
     # Add badges (scaled to background)
     badges = agent.get_badges()
@@ -885,44 +881,44 @@ def generate_certificate_for_agent(agent, photo_path):
     badge_size = int(bg_width * badge_ratios['size_ratio'])
 
     for i, badge_code in enumerate(badges):
-        badge_path = os.path.join(ADMIN_ASSETS_FOLDER, 'badges', f'{badge_code}.png')
+        badge_path = resolved('badge', badge_code)
         if os.path.exists(badge_path):
             badge_img = Image.open(badge_path).convert('RGBA')
             badge_img = badge_img.resize((badge_size, badge_size), Image.Resampling.LANCZOS)
             badge_y = badge_y_start + (i * badge_spacing)
-            background.paste(badge_img, (badge_x, badge_y), badge_img)
+            foreground.alpha_composite(badge_img, (badge_x, badge_y))
+
+    # Add tier-specific layer overlay OVER the photo (below the name tag)
+    layer_path = resolved('layer', tier)
+    if os.path.exists(layer_path):
+        layer_img = Image.open(layer_path).convert('RGBA')
+        # Layer covers the full certificate canvas, same as the background
+        layer_img = layer_img.resize((bg_width, bg_height), Image.Resampling.LANCZOS)
+        foreground.alpha_composite(layer_img)
+        print(f"[INFO] Layer ({tier}) overlaid at full size {bg_width}x{bg_height}")
 
     # Add tier-specific name tag banner OVER the photo at the bottom
-    nametag_path = os.path.join(ADMIN_ASSETS_FOLDER, 'nametags', f'{tier}.png')
+    nametag_ratios = POSITION_RATIOS['name_tag']
+    nametag_width = int(bg_width * nametag_ratios['width_ratio'])
+    nametag_path = resolved('nametag', tier)
     if os.path.exists(nametag_path):
-        nametag_img = Image.open(nametag_path).convert('RGBA')
-
-        # Use ratios for consistent positioning (original aspect ratio)
-        nametag_ratios = POSITION_RATIOS['name_tag']
-        nametag_width = int(bg_width * nametag_ratios['width_ratio'])
-        nametag_aspect = nametag_img.size[1] / nametag_img.size[0]
-        nametag_height = int(nametag_width * nametag_aspect)
-        nametag_img = nametag_img.resize((nametag_width, nametag_height), Image.Resampling.LANCZOS)
-
-        # Position at bottom (centered horizontally, using y_ratio for vertical)
-        nametag_x = (bg_width - nametag_width) // 2
-        nametag_y = int(bg_height * nametag_ratios['y_ratio']) - nametag_height // 2
-
-        # Paste name tag OVER the photo (layered on top)
-        background.paste(nametag_img, (nametag_x, nametag_y), nametag_img)
-        print(f"[INFO] Name tag ({tier}) overlaid at ({nametag_x}, {nametag_y}) with size {nametag_width}x{nametag_height}")
+        with Image.open(nametag_path) as uploaded_nametag:
+            fitted = fit_nametag(uploaded_nametag, background.size,
+                                 nametag_ratios['width_ratio'], nametag_ratios['y_ratio'])
+        if fitted is not None:
+            nametag_img, position, metadata['name_tag'] = fitted
+            nametag_width = nametag_img.width
+            foreground.alpha_composite(nametag_img, position)
+            print(f"[INFO] Name tag ({tier}) overlaid at {position} with size {nametag_img.width}x{nametag_img.height}")
 
     # Add agent name with DYNAMIC FONT SIZE - drawn on top of name tag
-    draw = ImageDraw.Draw(background)
+    draw = ImageDraw.Draw(foreground)
     name_ratios = POSITION_RATIOS['name_text']
     max_font_size = int(bg_height * name_ratios['font_size_ratio'])
-    min_font_size = int(bg_height * name_ratios.get('min_font_size_ratio', 60 / 3184))
     text_x = int(bg_width * name_ratios['x_ratio'])
     text_y = int(bg_height * name_ratios['y_ratio'])
 
     # Calculate max width based on name tag width
-    nametag_ratios = POSITION_RATIOS['name_tag']
-    nametag_width = int(bg_width * nametag_ratios['width_ratio'])
     max_text_width = int(nametag_width * name_ratios.get('max_width_ratio', 0.85))
 
     # Dynamic font sizing: Start with max and shrink if needed
@@ -930,85 +926,162 @@ def generate_certificate_for_agent(agent, photo_path):
     font = None
     text_bbox = None
 
-    for attempt in range(20):  # Try up to 20 times to find perfect size
+    # Client-provided "Avenir Black" font for the agent name text
+    AVENIR_FONT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fonts', 'Avenir.ttc')
+    AVENIR_BLACK_INDEX = 2  # Index within the .ttc collection for "Avenir Black"
+
+    display_name = agent_name.upper()
+    for attempt in range(80):  # Fit the uppercase face and 3D decoration.
         try:
-            # Try to use DejaVu Sans Bold for better readability
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
+            # Use the client-provided Avenir Black font
+            font = ImageFont.truetype(AVENIR_FONT_PATH, font_size, index=AVENIR_BLACK_INDEX)
         except:
             try:
-                font = ImageFont.truetype("arial.ttf", font_size)
+                # Fallback to DejaVu Sans Bold for readability
+                font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
             except:
-                font = ImageFont.load_default()
+                try:
+                    font = ImageFont.truetype("arial.ttf", font_size)
+                except:
+                    font = ImageFont.load_default()
 
         # Get text dimensions
-        text_bbox = draw.textbbox((0, 0), agent_name, font=font)
+        text_bbox = draw.textbbox((0, 0), display_name, font=font)
         text_width = text_bbox[2] - text_bbox[0]
 
         # If text fits, break
-        if text_width <= max_text_width:
+        if text_width + max(32, font_size // 2) <= max_text_width:
             break
 
-        # Reduce font size and try again
+        # Reduce font size and try again. Keep shrinking past the
+        # "preferred" minimum for very long names so the text never
+        # overflows the name tag -- only stop at a hard floor where
+        # text would become unreadably small.
         font_size = int(font_size * 0.92)  # Reduce by 8% each iteration
-        if font_size < min_font_size:  # Don't go below minimum
-            font_size = min_font_size
+        hard_floor = 12
+        if font_size < hard_floor:
+            font_size = hard_floor
+            font = ImageFont.truetype(AVENIR_FONT_PATH, font_size, index=AVENIR_BLACK_INDEX) if os.path.exists(AVENIR_FONT_PATH) else font
+            text_bbox = draw.textbbox((0, 0), display_name, font=font)
+            text_width = text_bbox[2] - text_bbox[0]
             break
 
-    text_height = text_bbox[3] - text_bbox[1]
+    if text_width + max(32, font_size // 2) > max_text_width:
+        raise BadRequest('Agent name is too long for the certificate.')
+    metadata['font'] = {'path': AVENIR_FONT_PATH, 'index': AVENIR_BLACK_INDEX, 'size': font_size,
+                        'sha256': fingerprint(AVENIR_FONT_PATH) if Path(AVENIR_FONT_PATH).is_file() else None}
 
-    # Center the text
-    centered_x = text_x - text_width // 2
-    centered_y = text_y - text_height // 2
+    # 3D metallic extruded text effect (per client reference "GPT example
+    # 3D text.html"): uppercase, gradient-filled face + orange->red gradient
+    # extrusion + soft drop shadow.
+    display_name = agent_name.upper()
+    draw_3d_metallic_text(foreground, display_name, font, text_x, text_y, style='name')
+    print(f"[INFO] Name text '{display_name}' drawn (3D metallic style) centered at ({text_x}, {text_y}) with font size {font_size}px (max width: {max_text_width}px, actual: {text_width}px)")
 
-    # Draw simple black text (no effects)
-    text_color = name_ratios.get('color', '#000000')
-    # Convert hex to RGB if needed
-    if isinstance(text_color, str) and text_color.startswith('#'):
-        text_color = tuple(int(text_color[i:i+2], 16) for i in (1, 3, 5))
+    cert_filename = f'{uuid4().hex}.png'
+    cert_path = str(Path(USER_OUTPUTS_FOLDER) / cert_filename)
+    metadata['output_size'] = [bg_width, bg_height]
+    metadata['editor'] = create_layers(USER_OUTPUTS_FOLDER, background, agent_img, foreground,
+                                       {'x': paste_x, 'y': paste_y, 'width': new_w, 'height': new_h})
+    try:
+        certificate_image = compose(background, agent_img, foreground, metadata['editor'], metadata['editor']['transform'])
+        atomic_image_save(certificate_image, cert_path)
+    except Exception:
+        discard_layers(USER_OUTPUTS_FOLDER, metadata['editor'])
+        raise
 
-    draw.text((centered_x, centered_y), agent_name, font=font, fill=text_color)
-    print(f"[INFO] Name text '{agent_name}' drawn at ({centered_x}, {centered_y}) with font size {font_size}px (max width: {max_text_width}px, actual: {text_width}px)")
+    return cert_filename, cert_path, metadata
 
-    # Save certificate with timestamp for unique filename
-    save_start = time.time()
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    cert_filename = f"{agent.client_code}_{agent_name.replace(' ', '_')}_{tier}_{timestamp}.png"
-    cert_path = os.path.join(USER_OUTPUTS_FOLDER, cert_filename)
-    background.save(cert_path, 'PNG')
-    print(f"[TIMING] Certificate saved: {time.time() - save_start:.2f}s")
+@app.get('/api/user/certificates/<int:cert_id>/editor')
+def user_get_editor(cert_id):
+    certificate = db.session.get(Certificate, cert_id)
+    require_certificate_access(certificate)
+    editor = (certificate.render_metadata or {}).get('editor')
+    paths = layer_paths(USER_OUTPUTS_FOLDER, editor)
+    if any(not path.is_file() for path in paths.values()):
+        abort(404, description='The portrait adjustment files are no longer available.')
+    return jsonify(success=True, width=editor['width'], height=editor['height'],
+                   portrait_rect=editor['portrait_rect'], transform=editor['transform'], revision=editor['revision'],
+                   layers={name: f'/user/certificates/{cert_id}/editor/{name}' for name in paths})
 
-    print(f"[TIMING] TOTAL TIME: {time.time() - start_time:.2f}s")
 
-    return cert_filename, cert_path
+@app.get('/api/user/certificates/<int:cert_id>/editor/<layer>')
+def user_get_editor_layer(cert_id, layer):
+    certificate = db.session.get(Certificate, cert_id)
+    require_certificate_access(certificate)
+    paths = layer_paths(USER_OUTPUTS_FOLDER, (certificate.render_metadata or {}).get('editor'))
+    if layer not in paths or not paths[layer].is_file():
+        abort(404)
+    return send_file(paths[layer], mimetype='image/png')
+
+
+@app.post('/api/user/certificates/<int:cert_id>/adjust')
+def user_adjust_certificate(cert_id):
+    certificate = db.session.get(Certificate, cert_id)
+    require_certificate_access(certificate)
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict) or type(data.get('revision')) is not int or data['revision'] < 0:
+        abort(400, description='Provide the current certificate revision.')
+    transform = validate_transform(data.get('transform'))
+    if not GENERATION_SLOT.acquire(blocking=False):
+        abort(429, description='The generator is busy. Please try again shortly.')
+    new_path = None
+    try:
+        # Another request may have saved while we were checking ownership.
+        db.session.expire_all()
+        certificate = db.session.get(Certificate, cert_id)
+        require_certificate_access(certificate)
+        metadata = deepcopy(certificate.render_metadata or {})
+        editor = metadata.get('editor')
+        layer_paths(USER_OUTPUTS_FOLDER, editor)
+        if editor['revision'] != data['revision']:
+            abort(409, description='This certificate has changed. Reopen the editor to load its latest position.')
+        image = render_saved_layers(USER_OUTPUTS_FOLDER, editor, transform)
+        old_path = safe_path(USER_OUTPUTS_FOLDER, certificate.filename)
+        filename = f'{uuid4().hex}.png'
+        new_path = safe_path(USER_OUTPUTS_FOLDER, filename)
+        atomic_image_save(image, new_path)
+        editor.update(transform=transform, revision=editor['revision'] + 1)
+        metadata['edited_at'] = datetime.now().isoformat()
+        certificate.render_metadata = metadata
+        certificate.filename, certificate.filepath = filename, str(new_path)
+        certificate.file_size = new_path.stat().st_size
+        # Restore the previous PNG if updating the history record fails.
+        with staged_delete([old_path]):
+            db.session.commit()
+        return jsonify(success=True, certificate_file=filename, revision=editor['revision'], transform=transform)
+    except Exception:
+        db.session.rollback()
+        if new_path:
+            new_path.unlink(missing_ok=True)
+        raise
+    finally:
+        GENERATION_SLOT.release()
+
 
 @app.route('/api/user/preview/<filename>', methods=['GET'])
 def user_preview_certificate(filename):
-    """User: Preview generated certificate"""
-    try:
-        filepath = os.path.join(USER_OUTPUTS_FOLDER, filename)
-        if os.path.exists(filepath):
-            return send_file(filepath)
-        return jsonify({'error': 'Certificate not found'}), 404
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+    certificate = Certificate.query.filter_by(filename=filename).first()
+    require_certificate_access(certificate)
+    path = safe_path(USER_OUTPUTS_FOLDER, certificate.filename)
+    if not path.is_file():
+        abort(404)
+    return send_file(path, mimetype='image/png')
+
 
 @app.route('/api/user/download/<filename>', methods=['GET'])
 def user_download_certificate(filename):
-    """User: Download certificate"""
-    try:
-        filepath = os.path.join(USER_OUTPUTS_FOLDER, filename)
-        if os.path.exists(filepath):
-            # Mark as downloaded in database
-            cert = Certificate.query.filter_by(filename=filename).first()
-            if cert:
-                mark_certificate_downloaded(cert.id)
+    certificate = Certificate.query.filter_by(filename=filename).first()
+    require_certificate_access(certificate)
+    path = safe_path(USER_OUTPUTS_FOLDER, certificate.filename)
+    if not path.is_file():
+        abort(404)
+    Certificate.query.filter_by(id=certificate.id).update({
+        Certificate.download_count: Certificate.download_count + 1,
+        Certificate.is_downloaded: True, Certificate.last_downloaded_at: datetime.now()})
+    db.session.commit()
+    return send_file(path, as_attachment=True, download_name=f'{secure_filename(certificate.client_code_snapshot or "certificate")}.png')
 
-            return send_file(filepath, as_attachment=True)
-        return jsonify({'error': 'Certificate not found'}), 404
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
-
-# ============= STATISTICS & REPORTING =============
 
 @app.route('/api/statistics', methods=['GET'])
 def get_stats():
@@ -1019,137 +1092,98 @@ def get_stats():
             'success': True,
             'statistics': stats
         })
+    except HTTPException:
+        raise
     except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
+        db.session.rollback()
+        app.logger.exception("Request failed")
+        return jsonify({'success': False, 'error': 'Unable to complete request.'}), 400
 
 @app.route('/api/certificates/recent', methods=['GET'])
 def get_recent_certs():
-    """Get recently generated certificates"""
-    try:
-        limit = request.args.get('limit', 10, type=int)
-        certificates = get_recent_certificates(limit=limit)
+    limit = request.args.get('limit', 10, type=int)
+    if not 1 <= limit <= 100:
+        abort(400, description='Limit must be 1-100.')
+    return jsonify(success=True, certificates=[row.to_dict() for row in get_recent_certificates(limit)])
 
-        return jsonify({
-            'success': True,
-            'certificates': [cert.to_dict() for cert in certificates]
-        })
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 400
-
-# ============= CERTIFICATE HISTORY ENDPOINTS =============
 
 @app.route('/api/certificates/history', methods=['GET'])
 def get_certificate_history():
-    """Get all generated certificates (for viewing history in User Portal)"""
-    try:
-        # Get all certificates, ordered by most recent first
-        certificates = Certificate.query.order_by(Certificate.generated_at.desc()).all()
+    page, size = pagination()
+    query = Certificate.query
+    search = request.args.get('search', '').strip()[:200]
+    if search:
+        query = query.filter(db.or_(Certificate.agent_name_snapshot.icontains(search, autoescape=True),
+                                   Certificate.client_code_snapshot.icontains(search, autoescape=True)))
+    from datetime import timedelta
+    for parameter, upper in [('from', False), ('to', True)]:
+        value = request.args.get(parameter)
+        if value:
+            try:
+                date = datetime.strptime(value, '%Y-%m-%d')
+            except ValueError:
+                abort(400, description='Dates must use YYYY-MM-DD.')
+            query = query.filter(Certificate.generated_at < date + timedelta(days=1)) if upper else query.filter(Certificate.generated_at >= date)
+    total = query.count()
+    records = query.order_by(Certificate.generated_at.desc(), Certificate.id.desc()).offset((page-1)*size).limit(size).all()
+    results = []
+    for cert in records:
+        badges = (cert.badges_snapshot or '').split(',')
+        results.append({'id': cert.id, 'client_code': cert.client_code_snapshot or 'UNKNOWN',
+                        'agent_name': cert.agent_name_snapshot or 'Unknown historical agent',
+                        'mdrt_tier': cert.tier_snapshot, 'life_member': 'LM' in badges,
+                        'honor_roll': 'HR' in badges, 'quarter_century': 'QC' in badges,
+                        'filename': cert.filename, 'generated_at': cert.generated_at.isoformat(),
+                        'original_photo_filename': cert.original_photo_filename,
+                        'has_original_photo': bool(cert.original_photo_filename)})
+    return jsonify(success=True, total=total, page=page, per_page=size, certificates=results)
 
-        result = []
-        for cert in certificates:
-            # Get agent details from relationship
-            agent = cert.agent
-
-            # Parse badges from snapshot
-            badges_str = cert.badges_snapshot or ''
-            badges = badges_str.split(',') if badges_str else []
-
-            result.append({
-                'id': cert.id,
-                'client_code': agent.client_code if agent else 'UNKNOWN',
-                'agent_name': cert.agent_name_snapshot or (agent.agent_name if agent else 'UNKNOWN'),
-                'mdrt_tier': cert.tier_snapshot or (agent.mdrt_tier if agent else 'MDRT'),
-                'life_member': 'LM' in badges or (agent.life_member if agent else False),
-                'honor_roll': 'HR' in badges or (agent.honor_roll if agent else False),
-                'quarter_century': 'QC' in badges or (agent.quarter_century if agent else False),
-                'filename': cert.filename,
-                'generated_at': cert.generated_at.isoformat(),
-                'original_photo_filename': cert.original_photo_filename,
-                'has_original_photo': cert.original_photo_filename is not None
-            })
-
-        return jsonify({
-            'success': True,
-            'total': len(result),
-            'certificates': result
-        })
-    except Exception as e:
-        print(f"Error fetching certificate history: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'success': False, 'error': str(e)}), 400
 
 @app.route('/api/certificates/<filename>', methods=['GET'])
 def get_certificate_file(filename):
-    """Serve a generated certificate file"""
-    try:
-        filepath = os.path.join(USER_OUTPUTS_FOLDER, filename)
-        if os.path.exists(filepath):
-            return send_file(filepath, mimetype='image/png')
-        return jsonify({'error': 'Certificate not found'}), 404
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+    return user_preview_certificate(filename)
+
 
 @app.route('/api/certificates/photo/<filename>', methods=['GET'])
 def get_original_photo(filename):
-    """Serve an original uploaded photo file"""
-    try:
-        filepath = os.path.join(USER_PHOTOS_FOLDER, filename)
-        if os.path.exists(filepath):
-            # Detect mime type from extension
-            ext = os.path.splitext(filename)[1].lower()
-            mime_type = 'image/jpeg' if ext in ['.jpg', '.jpeg'] else 'image/png'
-            return send_file(filepath, mimetype=mime_type)
-        return jsonify({'error': 'Photo not found'}), 404
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+    if not Certificate.query.filter_by(original_photo_filename=filename).first():
+        abort(404)
+    path = safe_path(USER_PHOTOS_FOLDER, filename)
+    if not path.is_file():
+        abort(404)
+    return send_file(path)
+
 
 @app.route('/api/certificates/<int:cert_id>', methods=['DELETE'])
 def delete_certificate(cert_id):
-    """Delete a certificate from history"""
-    try:
-        # Find certificate by ID
-        certificate = Certificate.query.get(cert_id)
-        if not certificate:
-            return jsonify({'success': False, 'error': 'Certificate not found'}), 404
-
-        # Delete physical file
-        filepath = os.path.join(USER_OUTPUTS_FOLDER, certificate.filename)
-        if os.path.exists(filepath):
-            os.remove(filepath)
-            print(f"Deleted certificate file: {filepath}")
-
-        # Delete from database
+    certificate = db.get_or_404(Certificate, cert_id)
+    paths = []
+    if not Certificate.query.filter(Certificate.id != cert_id, Certificate.filename == certificate.filename).first():
+        paths.append(safe_path(USER_OUTPUTS_FOLDER, certificate.filename))
+    if certificate.original_photo_filename and not Certificate.query.filter(Certificate.id != cert_id, Certificate.original_photo_filename == certificate.original_photo_filename).first():
+        paths.append(safe_path(USER_PHOTOS_FOLDER, certificate.original_photo_filename))
+    editor = (certificate.render_metadata or {}).get('editor')
+    if editor:
+        paths.extend(layer_paths(USER_OUTPUTS_FOLDER, editor).values())
+    with staged_delete(paths):
         db.session.delete(certificate)
         db.session.commit()
+    discard_layers(USER_OUTPUTS_FOLDER, editor)
+    return jsonify(success=True)
 
-        return jsonify({
-            'success': True,
-            'message': f'Certificate {certificate.filename} deleted successfully'
-        })
-    except Exception as e:
-        print(f"Error deleting certificate: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        db.session.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 400
-
-# ============= GENERAL ENDPOINTS =============
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    return jsonify({
-        'status': 'ok',
-        'message': 'MDRT Certificate Generator API with Database',
-        'database': 'connected',
-        'total_agents': Agent.query.count()
-    })
+    db.session.execute(db.text('SELECT 1'))
+    return jsonify(status='ok', database='connected')
 
 # Serve React frontend
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve_frontend(path):
     """Serve React frontend files"""
+    if path == 'api' or path.startswith('api/'):
+        abort(404)
     frontend_build = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'frontend', 'build'))
 
     if path != "" and os.path.exists(os.path.join(frontend_build, path)):
@@ -1172,4 +1206,4 @@ if __name__ == '__main__':
         print(f"Total Agents: {agent_count}")
 
     print("=" * 60)
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    app.run(host='127.0.0.1', port=5001, debug=False)

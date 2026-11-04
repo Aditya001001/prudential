@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './Loader.css';
 
-const Loader = ({ message = "Generating your certificate...", estimatedTime = 15 }) => {
+const Loader = ({ message = "正在產生海報…", estimatedTime = 15 }) => {
   const [elapsed, setElapsed] = useState(0);
   const [dots, setDots] = useState('');
 
@@ -31,7 +31,7 @@ const Loader = ({ message = "Generating your certificate...", estimatedTime = 15
     <div className="loader-overlay">
       <div className="loader-container">
         <div className="loader-header">
-          <img src="/prudential/PRU_logo_black.png" alt="Prudential" className="loader-logo" />
+          <img src={`${process.env.PUBLIC_URL}/PRU_logo_black.png`} alt="保誠" className="loader-logo" />
         </div>
 
         <div className="loader-content">
@@ -43,13 +43,13 @@ const Loader = ({ message = "Generating your certificate...", estimatedTime = 15
           
           <div className="loader-stats">
             <div className="stat-item">
-              <span className="stat-label">Elapsed</span>
-              <span className="stat-value">{elapsed}s</span>
+              <span className="stat-label">已用時間</span>
+              <span className="stat-value">{elapsed} 秒</span>
             </div>
             <div className="stat-divider"></div>
             <div className="stat-item">
-              <span className="stat-label">Estimated</span>
-              <span className="stat-value">~{estimatedTime}s</span>
+              <span className="stat-label">預計時間</span>
+              <span className="stat-value">約 {estimatedTime} 秒</span>
             </div>
           </div>
 
@@ -64,7 +64,7 @@ const Loader = ({ message = "Generating your certificate...", estimatedTime = 15
           </div>
 
           <p className="loader-subtitle">
-            Please wait while we create your MDRT certificate
+            正在製作您的 MDRT 海報，請稍候
           </p>
 
           <div className="loader-steps">

@@ -7,11 +7,17 @@ Type=simple
 User=aditya.developer
 WorkingDirectory=/home/aditya.developer/prudential/backend
 Environment="PATH=/home/aditya.developer/prudential/venv/bin:/usr/bin:/bin"
-ExecStart=/home/aditya.developer/prudential/venv/bin/python3 /home/aditya.developer/prudential/backend/app_with_db.py
-Restart=always
-RestartSec=10
-StandardOutput=append:/home/aditya.developer/prudential/backend/app.log
-StandardError=append:/home/aditya.developer/prudential/backend/app.log
+Environment="TZ=Asia/Hong_Kong"
+Environment="OMP_NUM_THREADS=2"
+Environment="OPENBLAS_NUM_THREADS=2"
+ExecStart=/home/aditya.developer/prudential/venv/bin/gunicorn --workers 1 --threads 4 --bind 127.0.0.1:5001 --timeout 600 --access-logfile - --error-logfile - app_with_db:app
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

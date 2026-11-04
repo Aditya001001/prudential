@@ -13,9 +13,10 @@
   },
   "scripts": {
     "start": "react-scripts start",
-    "build": "react-scripts build",
+    "build": "BUILD_PATH=build-staged react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject"
+    "eject": "react-scripts eject",
+    "publish": "bash scripts/publish.sh"
   },
   "eslintConfig": {
     "extends": [
@@ -34,5 +35,13 @@
       "last 1 safari version"
     ]
   },
-  "homepage": "/prudential"
+  "homepage": "/prudential",
+  "devDependencies": {
+    "http-proxy-middleware": "2.0.10"
+  },
+  "jest": {
+    "moduleNameMapper": {
+      "^react-router/dom$": "<rootDir>/node_modules/react-router/dist/development/dom-export.js"
+    }
+  }
 }

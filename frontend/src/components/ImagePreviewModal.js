@@ -15,8 +15,8 @@ function ImagePreviewModal({ image, onClose, onDownload }) {
     <div className="modal-backdrop" onClick={handleBackdropClick}>
       <div className="modal-content">
         <div className="modal-header">
-          <h3>{image.name || 'Image Preview'}</h3>
-          <button className="close-btn" onClick={onClose}>
+          <h3>{image.name || "圖片預覽"}</h3>
+          <button className="close-btn" aria-label="關閉圖片預覽" onClick={onClose}>
             <X size={24} />
           </button>
         </div>
@@ -24,20 +24,20 @@ function ImagePreviewModal({ image, onClose, onDownload }) {
         <div className="modal-body">
           <img 
             src={image.url} 
-            alt={image.name || 'Preview'} 
+            alt={image.name || "預覽"}
             className="modal-image"
           />
         </div>
 
         <div className="modal-footer">
           <div className="image-info">
-            {image.size && <span className="info-text">Size: {image.size}</span>}
+            {image.size && <span className="info-text">大小： {image.size}</span>}
             {image.tier && <span className="tier-badge">{image.tier}</span>}
           </div>
           {onDownload && (
             <button className="download-btn" onClick={onDownload}>
               <Download size={18} />
-              Download
+              下載
             </button>
           )}
         </div>

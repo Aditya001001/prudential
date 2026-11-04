@@ -5,18 +5,19 @@ Run this to create the database and tables
 from flask import Flask
 from database import db, Agent, Certificate, SystemAsset
 import os
+from config import configure
+from migrations import upgrade
 
 def init_database(app=None):
     """Initialize the database"""
     if app is None:
         app = Flask(__name__)
-        app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///mdrt_certificates.db'
-        app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+        configure(app)
         db.init_app(app)
     
     with app.app_context():
         # Create all tables
-        db.create_all()
+        upgrade()
         print("✅ Database tables created successfully!")
         
         # Print table info
@@ -31,8 +32,7 @@ def drop_database(app=None):
     """Drop all database tables (CAUTION: destroys all data!)"""
     if app is None:
         app = Flask(__name__)
-        app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///mdrt_certificates.db'
-        app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+        configure(app)
         db.init_app(app)
     
     with app.app_context():
@@ -48,8 +48,7 @@ def migrate_csv_to_db(csv_path='admin_assets/data.csv'):
     from db_services import import_agents_from_csv
     
     app = Flask(__name__)
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///mdrt_certificates.db'
-    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    configure(app)
     db.init_app(app)
     
     with app.app_context():
@@ -76,8 +75,7 @@ def show_statistics():
     from db_services import get_statistics
     
     app = Flask(__name__)
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///mdrt_certificates.db'
-    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    configure(app)
     db.init_app(app)
     
     with app.app_context():

@@ -23,7 +23,7 @@
 }
 
 .result-card {
-  max-width: 720px;
+  max-width: 880px;
   padding: 32px 40px;
   padding-bottom: calc(32px + env(safe-area-inset-bottom));
 }
@@ -333,6 +333,48 @@
   right: 0;
 }
 
+/* Keep photo requirements beside the device upload, or directly below on phones. */
+.device-upload {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px;
+}
+
+.device-upload .upload-box {
+  min-height: 120px;
+  padding: 20px 12px;
+}
+
+.photo-upload-help {
+  min-width: 0;
+  color: #4b5563;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.photo-upload-help p {
+  margin: 0 0 8px;
+  color: #374151;
+}
+
+.photo-upload-help ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.photo-upload-help li + li {
+  margin-top: 4px;
+}
+
+@media (max-width: 480px) {
+  .device-upload {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+}
+
 /* Resolution Warning */
 .resolution-warning {
   padding: 12px 16px;
@@ -617,73 +659,129 @@
   }
 }
 
-/* Result Actions */
+/* Result actions are scoped so shared history-button styles cannot override them. */
 .result-actions {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  flex-wrap: wrap;
+  width: 100%;
+  max-width: 680px;
+  margin: 0 auto;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 10px;
 }
 
-/* Mobile optimization for actions */
-@media (max-width: 480px) {
-  .result-actions {
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .btn-action {
-    width: 100%;
-  }
-}
-
-.btn-action {
-  padding: 12px 20px;
-  border-radius: 10px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.3s;
-  display: flex;
+.result-actions .btn-action {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  margin: 0;
+  padding: 8px 10px;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border: 2px solid transparent;
+  border: 1px solid #dc2626;
+  border-radius: 8px;
+  background: #fff;
+  color: #b91c1c;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color .2s, border-color .2s, box-shadow .2s;
 }
 
-.btn-download {
-  background: #10b981;
-  color: white;
-  border: none;
-  flex: 0 0 auto;
+.result-actions .btn-action svg {
+  flex-shrink: 0;
 }
 
-.btn-download:hover {
-  background: #059669;
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+.result-actions .btn-adjust-portrait {
+  background: #dc2626;
+  color: #fff;
 }
 
-.btn-view {
-  background: #e5e7eb;
-  color: #6b7280;
-  border: none;
-  flex: 0 0 auto;
+.result-actions .btn-download {
+  background: #15803d;
+  border-color: #15803d;
+  color: #fff;
 }
 
-.btn-view:hover {
-  background: #d1d5db;
-}
-
-.btn-new {
-  background: white;
-  color: #ef4444;
-  border: 2px solid #ef4444;
-  flex: 1;
-}
-
-.btn-new:hover {
+.result-actions .btn-action:hover:not(:disabled) {
   background: #fef2f2;
+  border-color: #b91c1c;
+  color: #b91c1c;
+  box-shadow: 0 3px 10px rgba(17, 24, 39, .08);
+}
+
+.result-actions .btn-adjust-portrait:hover:not(:disabled) {
+  background: #b91c1c;
+  color: #fff;
+}
+
+.result-actions .btn-download:hover:not(:disabled) {
+  background: #166534;
+  border-color: #166534;
+  color: #fff;
+}
+
+.result-actions .btn-action:focus-visible {
+  outline: 3px solid #1f2937;
+  outline-offset: 3px;
+}
+
+@media (max-width: 899px) {
+  .result-actions {
+    max-width: 360px;
+    gap: 8px;
+    grid-auto-flow: row;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .result-actions .btn-action {
+    min-height: 44px;
+  }
+}
+
+.result-actions .result-mobile {
+  display: none;
+}
+
+/* Phones use the short labels and stacked icons; larger screens keep the original actions. */
+@media (max-width: 600px) {
+  .result-actions {
+    max-width: 520px;
+    grid-auto-flow: column;
+    grid-template-columns: none;
+    gap: 8px;
+  }
+
+  .result-actions .btn-action {
+    width: 60px;
+    max-width: 100%;
+    min-height: 60px;
+    padding: 8px 4px;
+    justify-self: center;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  .result-actions .btn-action svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  .result-actions .result-desktop {
+    display: none;
+  }
+
+  .result-actions .result-mobile {
+    display: block;
+  }
 }
 
 /* History Button */
@@ -827,9 +925,6 @@
     font-size: 14px;
   }
 
-  .result-actions {
-    flex-direction: column;
-  }
 }
 
 /* Fullscreen Camera Modal */
@@ -951,3 +1046,9 @@
 .camera-modal-btn.capture:active .capture-inner {
   transform: scale(0.85);
 }
+
+/* Never display the previous poster while a saved revision is being loaded. */
+.poster-preview-status { min-height: min(240px, 30vh); padding: 24px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; color: #4b5563; }
+.poster-preview-status button { padding: 10px 18px; border: 1px solid #dc2626; border-radius: 8px; color: #b91c1c; background: #fff; cursor: pointer; }
+.certificate-preview[role="button"]:focus-visible { outline: 3px solid #dc2626; outline-offset: -3px; }
+.result-actions button:disabled { opacity: .5; cursor: wait; }

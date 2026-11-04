@@ -1,0 +1,513 @@
+Login page
+
+English
+
+Traditional Chinese
+
+Admin Access
+
+管理員登入
+
+MDRT Certificate Generator
+
+MDRT 海報產生器
+
+Username
+
+使用者名稱
+
+Password
+
+密碼
+
+Sign In
+
+登入
+
+Signing in...
+
+正在登入…
+
+
+
+Navigation and admin dashboard
+
+English
+
+Traditional Chinese
+
+User Portal
+
+使用者入口
+
+Admin Dashboard
+
+管理員控制台
+
+Certificate History
+
+海報紀錄
+
+Master Data History
+
+主資料上傳紀錄
+
+Logout
+
+登出
+
+Manage Master Assets For MDRT Certificate Generator
+
+管理 MDRT 海報產生器的主要素材
+
+Backgrounds
+
+背景圖片
+
+Badges
+
+徽章
+
+Name Tags
+
+名牌
+
+Layers
+
+圖層
+
+Master CSV
+
+主資料 CSV 檔案
+
+Master CSV Data
+
+主資料 CSV 數據
+
+Upload CSV or Excel to add or update agents. Agents omitted from the upload remain unchanged.
+
+上傳 CSV 或 Excel 檔案，以新增或更新代理人資料。未列於上傳檔案的代理人資料將維持不變。
+
+agents loaded
+
+已載入的代理人
+
+Delete
+
+刪除
+
+Sample Data Preview
+
+範例資料預覽
+
+Choose File / Select new CSV/Excel file
+
+選擇檔案／選擇新的 CSV 或 Excel 檔案
+
+Tier Backgrounds
+
+級別背景圖片
+
+Upload Backgrounds
+
+上傳背景圖片
+
+Upload background images for each MDRT tier
+
+上傳各 MDRT 級別的背景圖片
+
+Tier Layers
+
+級別圖層
+
+Upload Layers
+
+上傳圖層
+
+Upload overlay layer images for each MDRT tier (placed on top of the agent's photo, below the name tag)
+
+上傳各 MDRT 級別的疊加圖層圖片（顯示於代理人照片之上、名牌之下）
+
+Achievement Badges
+
+成就徽章
+
+Upload Badges
+
+上傳徽章
+
+Upload badge images for achievements
+
+上傳成就徽章圖片
+
+Name Tag Banners
+
+名牌橫幅
+
+Upload Name Tags
+
+上傳名牌
+
+Upload name tag banner images for each MDRT tier
+
+上傳各 MDRT 級別的名牌橫幅圖片
+
+Change File
+
+更換檔案
+
+Click to view full size
+
+點擊查看原圖
+
+Life Member / Honor Roll / Quarter Century
+
+終身會員／榮譽榜／四分之一世紀會員
+
+
+
+Certificate Records
+
+English
+
+Traditional Chinese
+
+View and manage all generated certificates
+
+查看及管理所有已產生的海報
+
+From Date / To Date
+
+開始日期／結束日期
+
+Search
+
+搜尋
+
+Previous / Next
+
+上一頁／下一頁
+
+Page 1 of 2 · 28 records
+
+第 1 頁，共 2 頁 · 28 筆紀錄
+
+Client Code
+
+客戶編號
+
+Agent Name
+
+代理人姓名
+
+Tier
+
+級別
+
+Achievements
+
+成就
+
+Generated Date
+
+產生日期
+
+Actions
+
+操作
+
+None
+
+無
+
+View Certificate
+
+查看海報
+
+View Original Photo
+
+查看原始照片
+
+Download Certificate
+
+下載海報
+
+Delete Certificate
+
+刪除海報
+
+
+
+Master data upload record
+
+English
+
+Traditional Chinese
+
+Track and download all uploaded master CSV or Excel files
+
+查看及下載所有已上傳的主資料 CSV 或 Excel 檔案
+
+File Name
+
+檔案名稱
+
+Total Agents
+
+代理人總數
+
+Imported / Updated
+
+新增／更新
+
+File Size
+
+檔案大小
+
+Uploaded Date
+
+上傳日期
+
+6 new / 0 updated
+
+新增 6 筆／更新 0 筆
+
+Download CSV
+
+下載 CSV 檔案
+
+Delete Record
+
+刪除紀錄
+
+Loading upload history...
+
+正在載入上傳紀錄…
+
+
+
+User Portal
+
+English
+
+Traditional Chinese
+
+Prudential Certificate Generator
+
+保誠海報產生器
+
+Enter Your Client Code
+
+輸入客戶編號
+
+Provide Your Photo
+
+提供照片
+
+Verify Photo
+
+確認照片
+
+Please enter your unique client identification code
+
+請輸入您的專屬客戶編號
+
+Validating...
+
+正在驗證…
+
+Client code found.
+
+已找到客戶編號。
+
+Next: Upload your Photo →
+
+下一步：上傳照片 →
+
+Client code:
+
+客戶編號：
+
+Capture with Camera
+
+使用相機拍照
+
+OR
+
+或
+
+Upload from Device
+
+從裝置上傳
+
+Back / Next →
+
+返回／下一步 →
+
+
+
+Customer ID and Photo
+
+English
+
+Traditional Chinese
+
+Prudential Certificate Generator
+
+保誠海報產生器
+
+Enter Your Client Code
+
+輸入客戶編號
+
+Provide Your Photo
+
+提供照片
+
+Verify Photo
+
+確認照片
+
+Please enter your unique client identification code
+
+請輸入您的專屬客戶編號
+
+Validating...
+
+正在驗證…
+
+Client code found.
+
+已找到客戶編號。
+
+Next: Upload your Photo →
+
+下一步：上傳照片 →
+
+Client code: 10000004
+
+客戶編號：10000004
+
+Capture with Camera / Upload from Device
+
+使用相機拍照／從裝置上傳
+
+OR
+
+或
+
+Back / Next →
+
+返回／下一步 →
+
+Your portrait
+
+您的肖像照
+
+Low Resolution… Photo may appear pixelated.
+
+解像度偏低。為獲得最佳效果，請上傳至少 1000 × 1500 像素（150 萬像素）的照片；否則照片可能顯得模糊。
+
+
+
+Generating and viewing certificates
+
+English
+
+Traditional Chinese
+
+Generating your certificate
+
+正在產生海報
+
+Elapsed / Estimated
+
+已用時間／預計時間
+
+Please wait while we create your MDRT certificate
+
+正在製作您的 MDRT 海報，請稍候
+
+Generating...
+
+正在產生…
+
+Certificate Generated
+
+海報已產生
+
+Loading poster preview…
+
+正在載入海報預覽…
+
+Click to view full size
+
+點擊查看原圖
+
+Adjust portrait
+
+調整肖像照
+
+Download
+
+下載
+
+View Full Size
+
+查看原圖
+
+Generate Another
+
+再產生一張
+
+
+
+Portrait adjustment window
+
+English
+
+Traditional Chinese
+
+Adjust your portrait
+
+調整肖像照
+
+Drag to move. Pinch or use the size slider to zoom.
+
+拖曳以移動照片；雙指縮放或使用尺寸滑桿調整大小。
+
+Portrait size
+
+肖像照大小
+
+Make portrait smaller / larger
+
+縮小／放大肖像照
+
+Fine position
+
+微調位置
+
+Horizontal position / Vertical position
+
+水平位置／垂直位置
+
+Move portrait up / left / right / down
+
+向上／向左／向右／向下移動肖像照
+
+Reset position
+
+重設位置
+
+Name, badges and design stay fixed.
+
+姓名、徽章及設計元素的位置保持不變。
+
+Cancel / Save changes
+
+取消／儲存變更
+
+Close portrait editor
+
+關閉肖像照編輯器
