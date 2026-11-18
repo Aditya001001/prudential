@@ -261,8 +261,37 @@ class Regressions(unittest.TestCase):
         self.assertLessEqual(expected[3],3184-90)
         with Image.open(output) as poster:
             self.assertEqual(poster.getpixel((expected[2]-2,expected[3]-2)),(255,0,255,255))
-        self.assertEqual(draw_name.call_args.args[3:5],(930,2750))
-        self.assertEqual(metadata['renderer_version'],4)
+        self.assertEqual(draw_name.call_args.args[3:5],(930,2780))
+        self.assertEqual(metadata['renderer_version'],6)
+
+    def test_tier_overlay_alignment_and_badges_above_it_survive_portrait_edits(self):
+        from portrait_editor import layer_paths, render_saved_layers
+        self.agent.life_member = self.agent.honor_roll = self.agent.quarter_century = True
+        root = Path(web.ADMIN_ASSETS_FOLDER)
+        for badge in ('LM', 'HR', 'QC'):
+            (root / 'badges' / f'{badge}.png').write_bytes(png((20, 20), 'lime').getvalue())
+        for tier in ('MDRT', 'COT', 'TOT'):
+            with self.subTest(tier=tier):
+                self.agent.mdrt_tier = tier
+                (root / 'backgrounds' / f'{tier}.png').write_bytes(png((1873, 3334), 'yellow').getvalue())
+                overlay = Image.new('RGBA', (180, 320))
+                overlay.paste('blue', (0, 110, 70, 260))
+                overlay.paste('purple', (170, 310, 180, 320))
+                overlay.save(root / 'layers' / f'{tier}.png')
+                with patch.object(web, 'remove_background', return_value=Image.new('RGBA', (200, 400), 'red')):
+                    _, output, metadata = web.generate_certificate_for_agent(self.agent, 'unused.png')
+                with Image.open(output) as poster:
+                    self.assertEqual(poster.size, (1800, 3184))
+                    self.assertEqual(poster.getpixel((5, 5)), (255, 255, 0, 255))
+                    self.assertEqual(poster.getpixel((1799, 3183)), (128, 0, 128, 255))
+                    for y in (1400, 1850, 2300):
+                        self.assertEqual(poster.getpixel((230, y)), (0, 255, 0, 255))
+                self.assertEqual(metadata['canvas_layers']['background']['bounds'], [0, 0, 1800, 3184])
+                self.assertEqual(metadata['canvas_layers']['tier_overlay']['bounds'], [0, 0, 1800, 3184])
+                editor = metadata['editor']
+                adjusted = render_saved_layers(web.USER_OUTPUTS_FOLDER, editor, {'scale': 1.2, 'offset_x': .05, 'offset_y': 0})
+                for y in (1400, 1850, 2300):
+                    self.assertEqual(adjusted.getpixel((230, y)), (0, 255, 0, 255))
 
     def test_pagination_filtering_and_private_metadata(self):
         self.cert();self.login()

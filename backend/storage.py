@@ -17,14 +17,20 @@ def validated_image(upload):
         raise BadRequest('Upload a PNG or JPEG image.')
     try:
         with warnings.catch_warnings():
-            warnings.simplefilter('error', Image.DecompressionBombWarning)
+            # Check dimensions ourselves so normal over-limit uploads receive
+            # an actionable error rather than being described as corrupt.
+            warnings.simplefilter('ignore', Image.DecompressionBombWarning)
             with Image.open(upload.stream) as image:
-                if image.format not in {'PNG', 'JPEG'} or image.width * image.height > MAX_PIXELS:
-                    raise BadRequest('Image must be PNG/JPEG and no larger than 25 megapixels.')
+                if image.format not in {'PNG', 'JPEG'}:
+                    raise BadRequest('Upload a PNG or JPEG image.')
+                if image.width * image.height > MAX_PIXELS:
+                    raise BadRequest(f'Image resolution {image.width}x{image.height} exceeds 25 megapixels.')
                 image.load()
                 return ImageOps.exif_transpose(image).convert('RGBA')
-    except (UnidentifiedImageError, OSError, Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
-        raise BadRequest('The uploaded image is corrupt or too large.') from error
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
+        raise BadRequest('Image resolution exceeds 25 megapixels. Reduce its dimensions and try again.') from error
+    except (UnidentifiedImageError, OSError, ValueError) as error:
+        raise BadRequest('Image cannot be decoded. Export a new PNG or JPEG and try again.') from error
 
 
 def safe_path(folder, filename):

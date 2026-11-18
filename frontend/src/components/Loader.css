@@ -238,3 +238,17 @@
     gap: 16px;
   }
 }
+
+.loader-overlay { padding: max(16px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); overflow-y: auto; overscroll-behavior: contain; }
+.loader-container { width: min(480px, 100%); min-width: 0; max-height: calc(100dvh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom))); overflow-y: auto; }
+.loader-logo { max-width: 100%; }
+.loader-stats, .stat-item { min-width: 0; }
+@media (max-height: 600px) {
+  .loader-container { padding: 20px; }
+  .loader-header { margin-bottom: 12px; }
+  .loader-logo { height: 36px; }
+  .loader-content { gap: 12px; }
+  .spinner-container, .spinner-outer { width: 44px; height: 44px; }
+  .loader-stats { padding: 8px 12px; }
+  .stat-value { font-size: 20px; }
+}

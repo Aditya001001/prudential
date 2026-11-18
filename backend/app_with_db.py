@@ -97,7 +97,7 @@ POSITION_RATIOS = {
     },
     'name_text': {
         'x_ratio': 930 / 1800,       # Small optical offset to align with the banner crest
-        'y_ratio': 2750 / 3184,      # ~0.864 (on name tag, moved higher)
+        'y_ratio': 2780 / 3184,      # Leave a clear gap below the banner crest
         'font_size_ratio': 170 / 3184,  # ~5.3% font size (bigger initial size)
         'min_font_size_ratio': 90 / 3184,  # ~2.8% minimum font size
         'color': '#000000',          # Black text (simple, no glow)
@@ -803,7 +803,8 @@ def generate_certificate_for_agent(agent, photo_path):
               for name in names}
     def resolved(kind, name):
         return assets[(kind, name)]
-    metadata = {'renderer_version': 4, 'model': 'u2net_human_seg', 'mask_max_dimension': 1024,
+    metadata = {'renderer_version': 6, 'layer_order': ['background', 'portrait', 'tier_overlay', 'badges', 'nametag', 'name'],
+                'canvas_layers': {}, 'model': 'u2net_human_seg', 'mask_max_dimension': 1024,
                 'layout': POSITION_RATIOS, 'assets': {f'{k[0]}/{k[1]}':
                     {'path': v, 'sha256': fingerprint(v)} for k, v in assets.items() if Path(v).is_file()}}
     tier = agent.mdrt_tier
@@ -817,7 +818,9 @@ def generate_certificate_for_agent(agent, photo_path):
         raise Exception(f"Background for {tier} not found")
 
     bg_load_start = time.time()
-    background = Image.open(bg_path).convert('RGBA')
+    with Image.open(bg_path) as source:
+        metadata['canvas_layers']['background'] = {'source_size': list(source.size), 'bounds': [0, 0, REFERENCE_WIDTH, REFERENCE_HEIGHT]}
+        background = source.convert('RGBA')
     background = background.resize((REFERENCE_WIDTH, REFERENCE_HEIGHT), Image.Resampling.LANCZOS)
     bg_width_original, bg_height_original = background.size
     print(f"[TIMING] Background loaded: {time.time() - bg_load_start:.2f}s")
@@ -872,7 +875,18 @@ def generate_certificate_for_agent(agent, photo_path):
 
     foreground = Image.new('RGBA', background.size)
 
-    # Add badges (scaled to background)
+    # Add tier-specific layer overlay OVER the photo (below the name tag)
+    layer_path = resolved('layer', tier)
+    if os.path.exists(layer_path):
+        with Image.open(layer_path) as source:
+            metadata['canvas_layers']['tier_overlay'] = {'source_size': list(source.size), 'bounds': [0, 0, bg_width, bg_height]}
+            layer_img = source.convert('RGBA')
+        # Layer covers the full certificate canvas, same as the background
+        layer_img = layer_img.resize((bg_width, bg_height), Image.Resampling.LANCZOS)
+        foreground.alpha_composite(layer_img)
+        print(f"[INFO] Layer ({tier}) overlaid at full size {bg_width}x{bg_height}")
+
+    # Badges remain above the tier overlay, including in saved editor layers.
     badges = agent.get_badges()
     badge_ratios = POSITION_RATIOS['badges']
     badge_x = int(bg_width * badge_ratios['x_ratio'])
@@ -883,19 +897,11 @@ def generate_certificate_for_agent(agent, photo_path):
     for i, badge_code in enumerate(badges):
         badge_path = resolved('badge', badge_code)
         if os.path.exists(badge_path):
-            badge_img = Image.open(badge_path).convert('RGBA')
+            with Image.open(badge_path) as source:
+                badge_img = source.convert('RGBA')
             badge_img = badge_img.resize((badge_size, badge_size), Image.Resampling.LANCZOS)
             badge_y = badge_y_start + (i * badge_spacing)
             foreground.alpha_composite(badge_img, (badge_x, badge_y))
-
-    # Add tier-specific layer overlay OVER the photo (below the name tag)
-    layer_path = resolved('layer', tier)
-    if os.path.exists(layer_path):
-        layer_img = Image.open(layer_path).convert('RGBA')
-        # Layer covers the full certificate canvas, same as the background
-        layer_img = layer_img.resize((bg_width, bg_height), Image.Resampling.LANCZOS)
-        foreground.alpha_composite(layer_img)
-        print(f"[INFO] Layer ({tier}) overlaid at full size {bg_width}x{bg_height}")
 
     # Add tier-specific name tag banner OVER the photo at the bottom
     nametag_ratios = POSITION_RATIOS['name_tag']

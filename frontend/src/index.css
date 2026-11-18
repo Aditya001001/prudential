@@ -22,3 +22,19 @@ code {
 .pagination-controls { display: flex; align-items: center; justify-content: center; gap: 16px; margin: 20px; flex-wrap: wrap; }
 .pagination-controls button { padding: 8px 16px; cursor: pointer; }
 .pagination-controls button:disabled { cursor: default; opacity: .5; }
+
+html { -webkit-text-size-adjust: 100%; scroll-padding-block: 16px; }
+button, input, select, textarea { font-family: inherit; }
+button, a, label[for] { -webkit-tap-highlight-color: transparent; }
+button, a { touch-action: manipulation; }
+:where(button, a, input, select, textarea, summary):focus-visible { outline: 3px solid #1f2937; outline-offset: 3px; }
+.pagination-controls button { min-width: 44px; min-height: 44px; }
+@media (max-width: 768px) {
+  .pagination-controls { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; margin: 16px 0; }
+  .pagination-controls span { min-width: 0; text-align: center; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+  .pagination-controls button { padding: 8px 10px; font-size: 14px; }
+  input:not([type=range]):not([type=checkbox]):not([type=radio]), select, textarea { font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}

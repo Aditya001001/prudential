@@ -47,7 +47,7 @@ test('system availability has a loading state and a retry after failure', async 
   expect(container.textContent).toContain("系統尚未準備就緒");
   api.get.mockResolvedValue({ data: { ready: true } });
   await act(async () => Simulate.click(container.querySelector('button')));
-  expect(container.textContent).toContain("輸入客戶編號");
+  expect(container.textContent).toContain("輸入閣下理財顧問編號");
 });
 
 test('an old client-code response cannot validate a newly changed code', async () => {
@@ -74,6 +74,8 @@ test('administrator upload errors remain visible after uploading finishes', asyn
   const upload = container.querySelector('input[type="file"][accept="image/png,image/jpeg"]');
   await act(async () => Simulate.change(upload, { target: { files: [new File(['bad'], 'image.png', { type: 'image/png' })] } }));
   expect(container.querySelector('[role="alert"]').textContent).toContain('圖片已損壞。');
+  expect(container.querySelector('.asset-upload-feedback.error').textContent).toContain('上傳未成功，原有圖片仍然保留。');
+  expect(container.querySelector('.asset-upload-requirements').textContent).toContain('2,500 萬像素');
 });
 
 test('photo guidance and requirements are visible in Chinese before choosing a file', async () => {
@@ -83,7 +85,7 @@ test('photo guidance and requirements are visible in Chinese before choosing a f
   await render(<UserPortal />);
   act(() => Simulate.change(container.querySelector('input'), { target: { value: '12345678' } }));
   await act(async () => jest.advanceTimersByTime(500));
-  expect(container.textContent).toContain('已找到客戶編號。');
+  expect(container.textContent).toContain('已找到理財顧問編號。');
   expect(container.textContent).not.toContain('Client code found.');
   await act(async () => Simulate.click(container.querySelector('button')));
   expect(container.querySelector('#photo-upload-guidance').textContent).toBe('請上載清晰半身職業照，面部清楚可見。');

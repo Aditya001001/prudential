@@ -41,32 +41,38 @@ function AdminLogin() {
 
         <form onSubmit={handleSubmit} className="admin-login-form">
           <div className="admin-form-group">
-            <label className="admin-form-label">
+            <label className="admin-form-label" htmlFor="admin-username">
               <User size={18} />
               使用者名稱
             </label>
             <input
               type="text"
+              id="admin-username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="請輸入使用者名稱"
               className="admin-form-input"
               autoComplete="username"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              enterKeyHint="next"
               required
-              autoFocus
             />
           </div>
 
           <div className="admin-form-group">
-            <label className="admin-form-label">
+            <label className="admin-form-label" htmlFor="admin-password">
               <Lock size={18} />
               密碼
             </label>
             <input
               type="password"
+              id="admin-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
+              enterKeyHint="go"
               placeholder="請輸入密碼"
               className="admin-form-input"
               required
@@ -82,7 +88,7 @@ function AdminLogin() {
           </button>
 
           {error && (
-            <div className="admin-login-error">
+            <div className="admin-login-error" role="alert">
               {error}
             </div>
           )}

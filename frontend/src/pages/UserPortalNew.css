@@ -166,7 +166,8 @@
   color: #6b7280;
   margin: 0;
   font-weight: 400;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .form-hint .client-code-highlight {
@@ -1052,3 +1053,35 @@
 .poster-preview-status button { padding: 10px 18px; border: 1px solid #dc2626; border-radius: 8px; color: #b91c1c; background: #fff; cursor: pointer; }
 .certificate-preview[role="button"]:focus-visible { outline: 3px solid #dc2626; outline-offset: -3px; }
 .result-actions button:disabled { opacity: .5; cursor: wait; }
+
+/* Phone forms stay within the viewport, including errors and long client codes. */
+.portal-wrapper { min-height: 100dvh; flex-direction: column; gap: 16px; }
+.portal-wrapper > .request-error { width: min(100%, 480px); margin: 0; flex-shrink: 0; }
+.step-card { min-width: 0; }
+.form-header-row { gap: 12px; flex-wrap: wrap; }
+.form-header-row .form-hint { min-width: 0; }
+.upload-box { width: 100%; font-family: inherit; }
+.upload-box:disabled { cursor: wait; opacity: .65; }
+.photo-read-status { margin: 0; padding: 8px; text-align: center; color: #4b5563; font-size: 14px; }
+.poster-preview-status button, .system-error button { min-height: 44px; padding: 10px 16px; }
+.camera-modal-overlay { padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); overscroll-behavior: contain; }
+.camera-modal { min-width: 0; min-height: 0; }
+.camera-modal-video { min-height: 0; object-fit: contain; }
+.camera-modal-status { position: absolute; inset: 16px 16px auto; padding: 12px; border-radius: 8px; text-align: center; color: #fff; background: #0009; pointer-events: none; }
+.camera-modal-btn { min-width: 44px; min-height: 44px; }
+.camera-modal-btn:disabled { opacity: .5; cursor: wait; }
+@media (max-width: 600px) {
+  .portal-wrapper { padding: max(20px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
+  .step-card { padding: 24px 16px; }
+  .form-header-row { gap: 8px; }
+  .camera-modal-controls { padding: 16px 12px; gap: 12px; }
+}
+@media (max-height: 600px) {
+  .portal-wrapper { padding-top: max(16px, env(safe-area-inset-top)); padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+  .step-card { padding-top: 20px; padding-bottom: 20px; }
+  .card-header { margin-bottom: 16px; }
+  .camera-modal-controls { padding: 10px 16px; }
+  .capture-ring { width: 58px; height: 58px; }
+  .capture-inner { width: 44px; height: 44px; }
+}
+.portal-wrapper .validation-text { overflow-wrap: anywhere; }

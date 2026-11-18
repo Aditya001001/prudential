@@ -11,7 +11,7 @@ import { getSession } from './api';
 // 404 Not Found Component
 function NotFound() {
   return (
-    <div style={{
+    <div className="not-found-page" style={{
       minHeight: '100vh',
       background: 'linear-gradient(135deg, #fce7f3 0%, #fbcfe8 100%)',
       display: 'flex',
@@ -19,7 +19,7 @@ function NotFound() {
       justifyContent: 'center',
       padding: '20px'
     }}>
-      <div style={{
+      <div className="not-found-card" style={{
         background: 'white',
         borderRadius: '24px',
         boxShadow: '0 10px 40px rgba(0, 0, 0, 0.1)',

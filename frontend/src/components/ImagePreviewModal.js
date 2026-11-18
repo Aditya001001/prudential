@@ -1,8 +1,11 @@
-import React from 'react';
+import React, { useId } from 'react';
 import { X, Download } from 'lucide-react';
 import './ImagePreviewModal.css';
+import useDialog from './useDialog';
 
 function ImagePreviewModal({ image, onClose, onDownload }) {
+  const titleId = useId();
+  const dialogRef = useDialog(onClose, Boolean(image));
   if (!image) return null;
 
   const handleBackdropClick = (e) => {
@@ -13,9 +16,9 @@ function ImagePreviewModal({ image, onClose, onDownload }) {
 
   return (
     <div className="modal-backdrop" onClick={handleBackdropClick}>
-      <div className="modal-content">
+      <div className="modal-content" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>
         <div className="modal-header">
-          <h3>{image.name || "圖片預覽"}</h3>
+          <h3 id={titleId} title={image.name}>{image.name || "圖片預覽"}</h3>
           <button className="close-btn" aria-label="關閉圖片預覽" onClick={onClose}>
             <X size={24} />
           </button>

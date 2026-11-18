@@ -237,23 +237,6 @@
   margin: 0 0 24px 0;
 }
 
-.btn-upload-all {
-  background: #ef4444;
-  color: white;
-  border: none;
-  padding: 10px 20px;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-upload-all:hover {
-  background: #dc2626;
-  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.25);
-}
-
 /* Upload Grid */
 .upload-grid {
   display: grid;
@@ -714,3 +697,82 @@
     height: 90px;
   }
 }
+
+/* Let admin content shrink naturally instead of creating a second page width. */
+.new-admin-container .admin-content-area,
+.new-admin-container .content-section,
+.new-admin-container .upload-box-new,
+.new-admin-container .upload-box-content,
+.new-admin-container .upload-area-new,
+.new-admin-container .csv-file-info > div { min-width: 0; }
+.new-admin-container .content-section { max-width: 100%; }
+.new-admin-container .upload-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); }
+.new-admin-container .status-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); }
+.new-admin-container .status-card-content h3 { white-space: normal; overflow: visible; text-overflow: clip; }
+.new-admin-container .csv-filename,
+.new-admin-container .file-input-text,
+.new-admin-container .preview-name { overflow-wrap: anywhere; }
+.new-admin-container .csv-file-info { flex-wrap: wrap; }
+.new-admin-container .file-input-label,
+.new-admin-container .btn-delete-csv,
+.new-admin-container .btn-upload-csv,
+.new-admin-container .upload-label-new { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+.new-admin-container .file-input-label { flex-shrink: 0; }
+.new-admin-container .file-input-text { min-width: 0; }
+.new-admin-container .section-header { flex-wrap: wrap; gap: 12px; }
+.new-admin-container .section-title { min-width: 0; }
+.new-admin-container .section-icon { flex-shrink: 0; }
+.new-admin-container .mini-preview { border: 0; padding: 0; }
+.new-admin-container .upload-label-new:focus-visible,
+.new-admin-container .mini-preview:focus-visible { outline: 3px solid #dc2626; outline-offset: 3px; }
+
+/* Keep the asset-preview close control inside the visible dialog header. */
+.new-admin-container .preview-modal { width: min(800px, calc(100vw - 32px)); max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px); }
+.new-admin-container .preview-header { flex-shrink: 0; gap: 12px; padding: 12px 16px; }
+.new-admin-container .preview-header h3 { min-width: 0; overflow-wrap: anywhere; }
+.new-admin-container .preview-header .modal-close { position: static; flex-shrink: 0; width: 44px; height: 44px; border-radius: 8px; }
+.new-admin-container .preview-body { min-height: 0; padding: 16px; }
+.new-admin-container .preview-body img { max-height: calc(100dvh - 136px); object-fit: contain; }
+
+@media (max-width: 900px) {
+  .new-admin-container .admin-content-area { gap: 24px; }
+  .new-admin-container .content-section { padding: 20px; }
+  .new-admin-container .status-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .new-admin-container .status-card:last-child { grid-column: 1 / -1; }
+  .new-admin-container .upload-grid { gap: 16px; }
+  .new-admin-container .section-title { font-size: 18px; }
+  .new-admin-container .section-desc { line-height: 1.65; margin-bottom: 20px; }
+  .new-admin-container .csv-upload-area { flex-wrap: wrap; align-items: center; }
+  .new-admin-container .file-input-text { flex: 1 1 180px; line-height: 1.5; }
+  .new-admin-container .csv-preview-box { padding: 16px; }
+  .new-admin-container .preview-item { flex-wrap: wrap; gap: 4px 12px; }
+  .new-admin-container .preview-name { min-width: 0; }
+  .new-admin-container .preview-header h3 { font-size: 16px; }
+}
+
+@media (max-width: 480px) {
+  .new-admin-container .content-section { padding: 16px; border-radius: 12px; }
+  .new-admin-container .upload-box-new { padding: 16px; }
+  .new-admin-container .upload-area-new { padding: 16px 10px; }
+  .new-admin-container .upload-box-content { gap: 12px; }
+  .new-admin-container .csv-file-info > div { flex: 1 1 130px; }
+  .new-admin-container .btn-upload-csv { width: 100%; }
+  .new-admin-container .status-card { padding: 10px; gap: 8px; }
+  .new-admin-container .status-card-icon { width: 28px; height: 28px; }
+  .new-admin-container .preview-modal { width: calc(100vw - 24px); max-width: calc(100vw - 24px); max-height: calc(100dvh - 24px); }
+  .new-admin-container .preview-body { padding: 12px; }
+}
+
+.new-admin-container .upload-label-new[aria-disabled="true"],
+.new-admin-container .file-input-label[aria-disabled="true"] { opacity: .6; cursor: wait; }
+.new-admin-container .file-input-label:focus-visible { outline: 3px solid #dc2626; outline-offset: 3px; }
+
+@media (hover: none) {
+  .new-admin-container .mini-preview .preview-overlay { opacity: 1; align-items: flex-end; justify-content: flex-end; padding: 4px; background: rgba(0, 0, 0, .15); }
+}
+
+.new-admin-container .asset-upload-requirements,
+.new-admin-container .asset-upload-feedback { font-size: 13px; line-height: 1.5; margin: 8px 0; overflow-wrap: anywhere; }
+.new-admin-container .asset-upload-requirements { color: #6b7280; }
+.new-admin-container .asset-upload-feedback.success { color: #166534; }
+.new-admin-container .asset-upload-feedback.error { color: #b91c1c; }

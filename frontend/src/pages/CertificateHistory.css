@@ -486,3 +486,65 @@
     height: 18px;
   }
 }
+
+/* Filters and record actions remain usable without a desktop-sized viewport. */
+.new-admin-container .search-controls { grid-template-columns: minmax(0, 1fr) minmax(145px, 180px) minmax(145px, 180px) auto; }
+.new-admin-container .search-input-wrapper,
+.new-admin-container .date-input-wrapper,
+.new-admin-container .input-with-icon,
+.new-admin-container .search-input,
+.new-admin-container .date-input { min-width: 0; }
+.new-admin-container .search-input-wrapper,
+.new-admin-container .input-with-icon { min-height: 48px; padding: 0 12px; }
+.new-admin-container .search-input,
+.new-admin-container .date-input { min-height: 44px; }
+.new-admin-container .btn-search { min-height: 44px; }
+.new-admin-container .date-input { max-width: 100%; }
+.new-admin-container .cert-actions { gap: 4px; flex-wrap: wrap; }
+.new-admin-container .btn-icon { width: 44px; height: 44px; flex-shrink: 0; border-radius: 8px; }
+.new-admin-container .btn-icon:focus-visible { outline: 3px solid #dc2626; outline-offset: 1px; }
+.new-admin-container .certificates-table td { overflow-wrap: anywhere; }
+.new-admin-container .certificates-table td:first-child { max-width: 280px; }
+.new-admin-container .cert-badges { margin-bottom: 0; }
+.new-admin-container .achievement-badge { max-width: 100%; }
+
+@media (max-width: 1200px) {
+  .new-admin-container .search-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .new-admin-container .search-input-wrapper { grid-column: 1 / -1; }
+  .new-admin-container .btn-search { grid-column: 1 / -1; }
+}
+
+@media (max-width: 900px) {
+  .new-admin-container .search-card { padding: 20px; }
+  .new-admin-container .search-input,
+  .new-admin-container .date-input { font-size: 16px; }
+  .new-admin-container .loading-state,
+  .new-admin-container .empty-state { padding: 40px 12px; }
+}
+
+/* Use the existing table data and actions as labeled cards on phones. */
+@media (max-width: 600px) {
+  .new-admin-container .search-card { padding: 16px; }
+  .new-admin-container .search-controls { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .new-admin-container .search-input-wrapper,
+  .new-admin-container .btn-search { grid-column: auto; }
+  .new-admin-container .certificates-table-container { overflow: visible; }
+  .new-admin-container .certificates-table { display: block; width: 100%; min-width: 0; background: transparent; }
+  .new-admin-container .certificates-table thead { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .new-admin-container .certificates-table tbody { display: grid; gap: 16px; }
+  .new-admin-container .certificates-table tbody tr { display: block; min-width: 0; padding: 4px 12px; border: 1px solid #e5e7eb; border-radius: 10px; background: #fff; }
+  .new-admin-container .certificates-table tbody tr:hover { background: #fff; }
+  .new-admin-container .certificates-table td,
+  .new-admin-container .certificates-table td:first-child { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 12px; width: 100%; max-width: none; padding: 12px 0; border-bottom: 1px solid #f3f4f6; font-size: 14px; align-items: start; }
+  .new-admin-container .certificates-table td::before { content: attr(data-label); color: #6b7280; font-weight: 500; }
+  .new-admin-container .certificates-table td > * { min-width: 0; }
+  .new-admin-container .certificates-table td[data-label="操作"] { display: block; border-bottom: 0; }
+  .new-admin-container .certificates-table td[data-label="操作"]::before { display: block; margin-bottom: 8px; }
+  .new-admin-container .cert-actions { gap: 8px; }
+  .new-admin-container .btn-icon { background: #f9fafb !important; }
+  .new-admin-container .btn-icon svg { width: 20px; height: 20px; }
+  .new-admin-container .tier-badge { justify-self: start; }
+  .new-admin-container .cert-badges { gap: 6px; }
+  .new-admin-container .empty-state h2 { font-size: 20px; }
+  .new-admin-container .empty-state p { font-size: 14px; line-height: 1.6; }
+}

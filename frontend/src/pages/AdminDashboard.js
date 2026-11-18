@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios, { API_URL, logout, errorMessage } from '../api';
-import { Upload, Eye, LogOut, User as UserIcon, History } from 'lucide-react';
+import { Upload, Eye } from 'lucide-react';
+import AdminNavigation from '../components/AdminNavigation';
+import useDialog from '../components/useDialog';
 import './AdminDashboard.css';
 
 
@@ -10,9 +12,11 @@ function AdminDashboard() {
   const [error, setError] = useState(null);
   const [assetStatus, setAssetStatus] = useState(null);
   const [uploading, setUploading] = useState({});
+  const [uploadFeedback, setUploadFeedback] = useState({});
   const [previewImage, setPreviewImage] = useState(null);
   const [selectedCSVFile, setSelectedCSVFile] = useState(null);
   const [imageTimestamp, setImageTimestamp] = useState(Date.now());
+  const previewDialogRef = useDialog(() => setPreviewImage(null), Boolean(previewImage), '.modal-close');
 
   useEffect(() => {
     fetchAssetStatus();
@@ -37,14 +41,19 @@ function AdminDashboard() {
     const formData = new FormData();
     formData.append(tier, file);
 
+    const feedbackKey = `background-${tier}.png`;
+    setUploadFeedback(previous => ({ ...previous, [feedbackKey]: null }));
     setError(null);
     setUploading(prev => ({ ...prev, [tier]: true }));
     try {
       await axios.post(`${API_URL}/admin/upload-backgrounds`, formData);
       setImageTimestamp(Date.now()); // Force image refresh only after upload
       await fetchAssetStatus();
+      setUploadFeedback(previous => ({ ...previous, [feedbackKey]: { success: true, message: '圖片已更新。新產生的海報將使用最新素材。' } }));
     } catch (error) {
-      setError(errorMessage(error));
+      const message = errorMessage(error);
+      setError(message);
+      setUploadFeedback(previous => ({ ...previous, [feedbackKey]: { success: false, message: `上傳未成功，原有圖片仍然保留。${message}` } }));
     } finally {
       setUploading(prev => ({ ...prev, [tier]: false }));
     }
@@ -54,14 +63,19 @@ function AdminDashboard() {
     const formData = new FormData();
     formData.append(badgeType, file);
 
+    const feedbackKey = `badge-${badgeType}.png`;
+    setUploadFeedback(previous => ({ ...previous, [feedbackKey]: null }));
     setError(null);
     setUploading(prev => ({ ...prev, [badgeType]: true }));
     try {
       await axios.post(`${API_URL}/admin/upload-badges`, formData);
       setImageTimestamp(Date.now()); // Force image refresh only after upload
       await fetchAssetStatus();
+      setUploadFeedback(previous => ({ ...previous, [feedbackKey]: { success: true, message: '圖片已更新。新產生的海報將使用最新素材。' } }));
     } catch (error) {
-      setError(errorMessage(error));
+      const message = errorMessage(error);
+      setError(message);
+      setUploadFeedback(previous => ({ ...previous, [feedbackKey]: { success: false, message: `上傳未成功，原有圖片仍然保留。${message}` } }));
     } finally {
       setUploading(prev => ({ ...prev, [badgeType]: false }));
     }
@@ -71,14 +85,19 @@ function AdminDashboard() {
     const formData = new FormData();
     formData.append(tier, file);
 
+    const feedbackKey = `nametag-${tier}.png`;
+    setUploadFeedback(previous => ({ ...previous, [feedbackKey]: null }));
     setError(null);
     setUploading(prev => ({ ...prev, [tier + '_nametag']: true }));
     try {
       await axios.post(`${API_URL}/admin/upload-nametags`, formData);
       setImageTimestamp(Date.now()); // Force image refresh only after upload
       await fetchAssetStatus();
+      setUploadFeedback(previous => ({ ...previous, [feedbackKey]: { success: true, message: '圖片已更新。新產生的海報將使用最新素材。' } }));
     } catch (error) {
-      setError(errorMessage(error));
+      const message = errorMessage(error);
+      setError(message);
+      setUploadFeedback(previous => ({ ...previous, [feedbackKey]: { success: false, message: `上傳未成功，原有圖片仍然保留。${message}` } }));
     } finally {
       setUploading(prev => ({ ...prev, [tier + '_nametag']: false }));
     }
@@ -88,14 +107,19 @@ function AdminDashboard() {
     const formData = new FormData();
     formData.append(tier, file);
 
+    const feedbackKey = `layer-${tier}.png`;
+    setUploadFeedback(previous => ({ ...previous, [feedbackKey]: null }));
     setError(null);
     setUploading(prev => ({ ...prev, [tier + '_layer']: true }));
     try {
       await axios.post(`${API_URL}/admin/upload-layers`, formData);
       setImageTimestamp(Date.now()); // Force image refresh only after upload
       await fetchAssetStatus();
+      setUploadFeedback(previous => ({ ...previous, [feedbackKey]: { success: true, message: '圖片已更新。新產生的海報將使用最新素材。' } }));
     } catch (error) {
-      setError(errorMessage(error));
+      const message = errorMessage(error);
+      setError(message);
+      setUploadFeedback(previous => ({ ...previous, [feedbackKey]: { success: false, message: `上傳未成功，原有圖片仍然保留。${message}` } }));
     } finally {
       setUploading(prev => ({ ...prev, [tier + '_layer']: false }));
     }
@@ -131,12 +155,14 @@ function AdminDashboard() {
   const FileUploadBox = ({ title, currentFile, onUpload, isUploading, assetType, filename }) => {
     const handleFileSelect = (e) => {
       const file = e.target.files[0];
+      e.target.value = '';
       if (file) {
         onUpload(file);
       }
     };
 
     const previewUrl = currentFile ? `${API_URL}/admin/preview-asset/${assetType}/${filename}?t=${imageTimestamp}` : null;
+    const feedback = uploadFeedback[`${assetType}-${filename}`];
     const buttonText = isUploading ? "正在上傳…" : (currentFile ? "更換檔案" : "上傳檔案");
 
     const handlePreviewClick = () => {
@@ -148,6 +174,8 @@ function AdminDashboard() {
     return (
       <div className={`upload-box-new ${currentFile ? 'has-file' : ''}`}>
         <h3 className="upload-box-title-new">{title}</h3>
+        <p className="asset-upload-requirements">PNG／JPEG · 少於 50 MB · 最高 2,500 萬像素</p>
+        {feedback && <p className={`asset-upload-feedback ${feedback.success ? 'success' : 'error'}`} role={feedback.success ? 'status' : 'alert'}>{feedback.message}</p>}
         <div className="upload-box-content">
           <div className="upload-area-new">
             <input
@@ -158,7 +186,13 @@ function AdminDashboard() {
               id={`upload-${assetType}-${filename}`}
               style={{ display: 'none' }}
             />
-            <label htmlFor={`upload-${assetType}-${filename}`} className="upload-label-new">
+            <label htmlFor={`upload-${assetType}-${filename}`} className="upload-label-new" role="button" tabIndex={isUploading ? -1 : 0}
+              aria-label={`${title}：${buttonText}`} aria-disabled={isUploading}
+              onKeyDown={event => {
+                if (!isUploading && ['Enter', ' '].includes(event.key)) {
+                  event.preventDefault(); document.getElementById(`upload-${assetType}-${filename}`).click();
+                }
+              }}>
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
               </svg>
@@ -166,12 +200,12 @@ function AdminDashboard() {
             </label>
           </div>
           {previewUrl && (
-            <div className="mini-preview" onClick={handlePreviewClick} title="點擊查看原圖">
-              <img src={previewUrl} alt={title} />
-              <div className="preview-overlay">
+            <button type="button" className="mini-preview" onClick={handlePreviewClick} title="點擊查看原圖" aria-label={`查看${title}原圖`}>
+              <img src={previewUrl} alt={title} loading="lazy" decoding="async" />
+              <span className="preview-overlay" aria-hidden="true">
                 <Eye size={20} />
-              </div>
-            </div>
+              </span>
+            </button>
           )}
         </div>
       </div>
@@ -180,36 +214,7 @@ function AdminDashboard() {
 
   return (
     <div className="new-admin-container">
-      {/* Sidebar */}
-      <div className="admin-sidebar">
-        <div className="sidebar-logo">
-          <img src={`${process.env.PUBLIC_URL}/PRU_logo_white_RGB_v1%201.png`} alt="保誠" />
-        </div>
-        
-        <nav className="sidebar-nav">
-          <a href="/prudential/" className="nav-item">
-            <UserIcon size={20} />
-            <span>使用者入口</span>
-          </a>
-          <a href="/prudential/admin" className="nav-item active">
-            <Upload size={20} />
-            <span>管理員控制台</span>
-          </a>
-          <a href="/prudential/history" className="nav-item">
-            <History size={20} />
-            <span>海報紀錄</span>
-          </a>
-          <a href="/prudential/master-data-history" className="nav-item">
-            <History size={20} />
-            <span>主資料上傳紀錄</span>
-          </a>
-        </nav>
-
-        <button className="logout-button" onClick={handleLogout}>
-          <LogOut size={18} />
-          <span>登出</span>
-        </button>
-      </div>
+      <AdminNavigation onLogout={handleLogout} />
 
       {/* Main Content */}
       <div className="admin-main">
@@ -364,6 +369,7 @@ function AdminDashboard() {
                 accept=".csv,.xlsx,.xls"
                 onChange={(e) => {
                   const file = e.target.files[0];
+      e.target.value = '';
                   if (file) {
                     // If no CSV exists yet, upload automatically (first time)
                     // Otherwise, store file and show "Merge Master Data" button
@@ -376,9 +382,16 @@ function AdminDashboard() {
                   }
                 }}
                 id="csv-upload"
+                disabled={Boolean(uploading.csv)}
                 style={{ display: 'none' }}
               />
-              <label htmlFor="csv-upload" className="file-input-label">
+              <label htmlFor="csv-upload" className="file-input-label" role="button" tabIndex={uploading.csv ? -1 : 0}
+                aria-label="選擇主資料 CSV 或 Excel 檔案" aria-disabled={Boolean(uploading.csv)}
+                onKeyDown={event => {
+                  if (!uploading.csv && ['Enter', ' '].includes(event.key)) {
+                    event.preventDefault(); document.getElementById('csv-upload').click();
+                  }
+                }}>
                 {uploading.csv ? "正在上傳…" : "選擇檔案"}
               </label>
               <span className="file-input-text">
@@ -413,7 +426,7 @@ function AdminDashboard() {
                 <Upload size={20} className="section-icon" />
                 級別背景圖片
               </h2>
-              <button className="btn-upload-all">上傳背景圖片</button>
+
             </div>
             <p className="section-desc">上傳各 MDRT 級別的背景圖片</p>
 
@@ -452,7 +465,7 @@ function AdminDashboard() {
                 <Upload size={20} className="section-icon" />
                 級別圖層
               </h2>
-              <button className="btn-upload-all">上傳圖層</button>
+
             </div>
             <p className="section-desc">上傳各 MDRT 級別的疊加圖層圖片（顯示於代理人照片之上、名牌之下）</p>
 
@@ -491,7 +504,7 @@ function AdminDashboard() {
                 <Upload size={20} className="section-icon" />
                 成就徽章
               </h2>
-              <button className="btn-upload-all">上傳徽章</button>
+
             </div>
             <p className="section-desc">上傳成就徽章圖片</p>
 
@@ -530,7 +543,7 @@ function AdminDashboard() {
                 <Upload size={20} className="section-icon" />
                 名牌橫幅
               </h2>
-              <button className="btn-upload-all">上傳名牌</button>
+
             </div>
             <p className="section-desc">上傳各 MDRT 級別的名牌橫幅圖片</p>
 
@@ -568,7 +581,7 @@ function AdminDashboard() {
       {/* Image Preview Modal */}
       {previewImage && (
         <div className="modal-overlay" onClick={() => setPreviewImage(null)}>
-          <div className="modal-content preview-modal" onClick={e => e.stopPropagation()}>
+          <div className="modal-content preview-modal" ref={previewDialogRef} role="dialog" aria-modal="true" aria-label={previewImage.title} tabIndex={-1} onClick={e => e.stopPropagation()}>
             <div className="preview-header">
               <h3>{previewImage.title}</h3>
               <button className="modal-close" aria-label="關閉圖片預覽" onClick={() => setPreviewImage(null)}>×</button>

@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios, { API_URL, logout, errorMessage } from '../api';
-import { Eye, Download, Trash2, AlertCircle, Search, Calendar, User, Home, Users, Image as ImageIcon, History } from 'lucide-react';
+import { Eye, Download, Trash2, AlertCircle, Search, Calendar, Image as ImageIcon } from 'lucide-react';
 import ImagePreviewModal from '../components/ImagePreviewModal';
 import ConfirmModal from '../components/ConfirmModal';
 import Pagination from '../components/Pagination';
+import AdminNavigation from '../components/AdminNavigation';
 import './CertificateHistory.css';
 
 
@@ -88,36 +89,7 @@ function CertificateHistory() {
 
   return (
     <div className="new-admin-container">
-      {/* Sidebar */}
-      <div className="admin-sidebar">
-        <div className="sidebar-logo">
-          <img src={`${process.env.PUBLIC_URL}/PRU_logo_white_RGB_v1%201.png`} alt="保誠" />
-        </div>
-        
-        <nav className="sidebar-nav">
-          <button className="nav-item" onClick={() => navigate('/')}>
-            <User size={20} />
-            使用者入口
-          </button>
-          <button className="nav-item" onClick={() => navigate('/admin')}>
-            <Home size={20} />
-            管理員控制台
-          </button>
-          <button className="nav-item active">
-            <Users size={20} />
-            海報紀錄
-          </button>
-          <button className="nav-item" onClick={() => navigate('/master-data-history')}>
-            <History size={20} />
-            主資料上傳紀錄
-          </button>
-        </nav>
-
-        <button className="logout-button" onClick={handleLogout}>
-          <AlertCircle size={18} />
-          登出
-        </button>
-      </div>
+      <AdminNavigation onLogout={handleLogout} />
 
       {/* Main Content */}
       <div className="admin-main">
@@ -196,7 +168,7 @@ function CertificateHistory() {
             </div>
           ) : (
             <div className="certificates-table-container">
-              <table className="certificates-table">
+              <table className="certificates-table" aria-label="海報紀錄">
                 <thead>
                   <tr>
                     <th>客戶編號</th>
@@ -210,16 +182,16 @@ function CertificateHistory() {
                 <tbody>
                   {filteredCertificates.map((cert) => (
                     <tr key={cert.id}>
-                      <td>
+                      <td data-label="客戶編號">
                         <span className="code-highlight">{cert.client_code}</span>
                       </td>
-                      <td>
+                      <td data-label="代理人姓名">
                         <strong>{cert.agent_name}</strong>
                       </td>
-                      <td>
+                      <td data-label="級別">
                         <span className="tier-badge">{cert.mdrt_tier}</span>
                       </td>
-                      <td>
+                      <td data-label="成就">
                         <div className="cert-badges">
                           {cert.life_member && <span className="achievement-badge">終身會員</span>}
                           {cert.honor_roll && <span className="achievement-badge">榮譽榜</span>}
@@ -229,7 +201,7 @@ function CertificateHistory() {
                           )}
                         </div>
                       </td>
-                      <td>
+                      <td data-label="產生日期">
                         <div className="cert-date">
                           {new Date(cert.generated_at).toLocaleDateString("zh-HK", {
                             year: 'numeric',
@@ -244,12 +216,13 @@ function CertificateHistory() {
                           </div>
                         </div>
                       </td>
-                      <td>
+                      <td data-label="操作">
                         <div className="cert-actions">
                           <button
                             className="btn-icon btn-icon-view"
                             onClick={() => viewCertificate(cert.filename)}
                             title="查看海報"
+                            aria-label="查看海報"
                           >
                             <Eye size={20} />
                           </button>
@@ -258,6 +231,7 @@ function CertificateHistory() {
                               className="btn-icon btn-icon-photo"
                               onClick={() => viewOriginalPhoto(cert.original_photo_filename)}
                               title="查看原始照片"
+                              aria-label="查看原始照片"
                             >
                               <ImageIcon size={20} />
                             </button>
@@ -267,6 +241,7 @@ function CertificateHistory() {
                             download={cert.filename}
                             className="btn-icon btn-icon-download"
                             title="下載海報"
+                            aria-label="下載海報"
                           >
                             <Download size={20} />
                           </a>
@@ -274,6 +249,7 @@ function CertificateHistory() {
                             className="btn-icon btn-icon-delete"
                             onClick={() => handleDeleteClick(cert.id, cert.agent_name)}
                             title="刪除海報"
+                            aria-label="刪除海報"
                           >
                             <Trash2 size={20} />
                           </button>
@@ -302,6 +278,7 @@ function CertificateHistory() {
         onClose={() => setConfirmDelete(null)}
         onConfirm={confirmDeleteCertificate}
         title="刪除海報"
+        aria-label="刪除海報"
         message={`確定要刪除「${confirmDelete?.name || "此代理人"}」的海報嗎？此操作無法復原。`}
       />
     </div>

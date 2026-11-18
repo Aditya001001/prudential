@@ -15,6 +15,8 @@ const messages = {
   'Provide at least one recognized asset.': '請選擇至少一項支援的素材。',
   'Background dimensions must be at least 300 pixels.': '背景圖片的寬度及高度均須至少為 300 像素。',
   'Upload a PNG or JPEG image.': '請上傳 PNG 或 JPEG 圖片。',
+  'Image resolution exceeds 25 megapixels. Reduce its dimensions and try again.': '圖片解像度超過 2,500 萬像素，請縮小圖片尺寸後再上傳。檔案容量較小並不代表解像度符合限制。',
+  'Image cannot be decoded. Export a new PNG or JPEG and try again.': '無法讀取圖片內容，檔案可能已損壞或編碼不受支援。請重新匯出為 PNG 或 JPEG 後再上傳。',
   'Image must be PNG/JPEG and no larger than 25 megapixels.': '圖片須為 PNG 或 JPEG 格式，且不可超過 2,500 萬像素。',
   'The uploaded image is corrupt or too large.': '上傳的圖片已損壞或過大。',
   'Image is corrupt.': '圖片已損壞。',
@@ -60,6 +62,11 @@ const fieldNames = {
 export function localizeMessage(message, fallback = '無法完成操作，請重試。') {
   if (typeof message !== 'string' || !message.trim()) return fallback;
   if (Object.prototype.hasOwnProperty.call(messages, message)) return messages[message];
+  const resolution = message.match(/^Image resolution (\d+)x(\d+) exceeds 25 megapixels\.$/);
+  if (resolution) {
+    const width = Number(resolution[1]), height = Number(resolution[2]);
+    return `圖片尺寸為 ${width.toLocaleString('zh-HK')} × ${height.toLocaleString('zh-HK')} 像素（約 ${(width * height / 1000000).toFixed(1)} 百萬像素），超過 2,500 萬像素上限。請縮小圖片尺寸後再上傳；檔案容量低於 50 MB 仍須符合此限制。`;
+  }
   const row = message.match(/^Row (\d+): (.*)$/s);
   if (row) return `第 ${row[1]} 列：${localizeMessage(row[2], '資料格式無效，請檢查後重試。')}`;
   if (message.startsWith('Missing required columns: ')) {

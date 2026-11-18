@@ -173,3 +173,17 @@
     width: 100%;
   }
 }
+
+.confirm-modal-backdrop { padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); overscroll-behavior: contain; }
+.confirm-modal-backdrop .confirm-modal-content { width: min(400px, 100%); max-width: 100%; max-height: calc(100dvh - max(12px, env(safe-area-inset-top)) - max(12px, env(safe-area-inset-bottom))); overflow-y: auto; overscroll-behavior: contain; }
+.confirm-modal-backdrop .confirm-close-btn { width: 44px; height: 44px; top: 8px; right: 8px; }
+.confirm-message { overflow-wrap: anywhere; }
+.confirm-actions { position: sticky; bottom: -1px; padding-top: 8px; background: #fff; }
+.confirm-actions button { min-width: 44px; min-height: 44px; }
+@media (max-height: 520px) {
+  .confirm-modal-backdrop .confirm-modal-content { padding: 20px; }
+  .confirm-icon { width: 44px; height: 44px; margin-bottom: 12px; }
+  .confirm-icon svg { width: 28px; height: 28px; }
+  .confirm-message { margin-bottom: 12px; }
+  .confirm-actions { flex-direction: row; }
+}

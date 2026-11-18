@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios, { API_URL, logout, errorMessage } from '../api';
-import { Download, Trash2, AlertCircle, User, Home, Users, History, FileText } from 'lucide-react';
+import { Download, Trash2, FileText } from 'lucide-react';
 import ConfirmModal from '../components/ConfirmModal';
 import Pagination from '../components/Pagination';
+import AdminNavigation from '../components/AdminNavigation';
 import './CertificateHistory.css';
 
 
@@ -75,36 +76,7 @@ function MasterDataHistory() {
 
   return (
     <div className="new-admin-container">
-      {/* Sidebar */}
-      <div className="admin-sidebar">
-        <div className="sidebar-logo">
-          <img src={`${process.env.PUBLIC_URL}/PRU_logo_white_RGB_v1%201.png`} alt="保誠" />
-        </div>
-
-        <nav className="sidebar-nav">
-          <button className="nav-item" onClick={() => navigate('/')}>
-            <User size={20} />
-            使用者入口
-          </button>
-          <button className="nav-item" onClick={() => navigate('/admin')}>
-            <Home size={20} />
-            管理員控制台
-          </button>
-          <button className="nav-item" onClick={() => navigate('/history')}>
-            <Users size={20} />
-            海報紀錄
-          </button>
-          <button className="nav-item active">
-            <History size={20} />
-            主資料上傳紀錄
-          </button>
-        </nav>
-
-        <button className="logout-button" onClick={handleLogout}>
-          <AlertCircle size={18} />
-          登出
-        </button>
-      </div>
+      <AdminNavigation onLogout={handleLogout} />
 
       {/* Main Content */}
       <div className="admin-main">
@@ -131,7 +103,7 @@ function MasterDataHistory() {
             </div>
           ) : (
             <div className="certificates-table-container">
-              <table className="certificates-table">
+              <table className="certificates-table" aria-label="主資料上傳紀錄">
                 <thead>
                   <tr>
                     <th>檔案名稱</th>
@@ -145,15 +117,15 @@ function MasterDataHistory() {
                 <tbody>
                   {csvHistory.map((item) => (
                     <tr key={item.id}>
-                      <td>
+                      <td data-label="檔案名稱">
                         <strong>{item.original_filename}</strong>
                       </td>
-                      <td>{item.total_agents}</td>
-                      <td>
+                      <td data-label="代理人總數">{item.total_agents}</td>
+                      <td data-label="新增／更新">
                         新增 {item.imported_count} 筆／更新 {item.updated_count} 筆
                       </td>
-                      <td>{formatFileSize(item.file_size)}</td>
-                      <td>
+                      <td data-label="檔案大小">{formatFileSize(item.file_size)}</td>
+                      <td data-label="上傳日期">
                         <div className="cert-date">
                           {new Date(item.uploaded_at).toLocaleDateString("zh-HK", {
                             year: 'numeric',
@@ -168,12 +140,13 @@ function MasterDataHistory() {
                           </div>
                         </div>
                       </td>
-                      <td>
+                      <td data-label="操作">
                         <div className="cert-actions">
                           <button
                             className="btn-icon btn-icon-download"
                             onClick={() => downloadCsv(item.id)}
                             title="下載 CSV 檔案"
+                            aria-label="下載 CSV 檔案"
                           >
                             <Download size={20} />
                           </button>
@@ -181,6 +154,7 @@ function MasterDataHistory() {
                             className="btn-icon btn-icon-delete"
                             onClick={() => handleDeleteClick(item.id, item.original_filename)}
                             title="刪除紀錄"
+                            aria-label="刪除紀錄"
                           >
                             <Trash2 size={20} />
                           </button>
