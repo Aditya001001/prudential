@@ -25,4 +25,9 @@ def configure(app):
         MAX_CONTENT_LENGTH=50 * 1024 * 1024,
         MAX_FORM_MEMORY_SIZE=512 * 1024,
         MAX_FORM_PARTS=20,
+        REDIS_URL=os.environ.get('REDIS_URL', 'redis://127.0.0.1:6379/0'),
+        GENERATION_QUEUE_NAME='certificate-generation',
+        GENERATION_QUEUE_MAX_JOBS=int(os.environ.get('GENERATION_QUEUE_MAX_JOBS', '25')),
+        GENERATION_QUEUE_PER_OWNER=int(os.environ.get('GENERATION_QUEUE_PER_OWNER', '2')),
+        GENERATION_ESTIMATED_SECONDS=int(os.environ.get('GENERATION_ESTIMATED_SECONDS', '15')),
     )

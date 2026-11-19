@@ -1,6 +1,5 @@
 from flask import Flask, request, jsonify, send_file, send_from_directory, session, abort
 import os
-import shutil
 from PIL import Image, ImageDraw, ImageFont
 from pathlib import Path
 from uuid import uuid4
@@ -13,6 +12,7 @@ from config import configure, BASE_DIR
 from security import install_security, require_certificate_access
 from storage import validated_image, safe_path, atomic_image_save, fingerprint, staged_delete
 from nametag_layout import fit_nametag
+from generation_queue import enqueue_generation
 
 from portrait_editor import (
     create_layers, discard_layers, layer_paths, compose, render_saved_layers, validate_transform,
@@ -20,10 +20,12 @@ from portrait_editor import (
 
 REMBG_SESSION = None
 MODEL_LOCK = Lock()
-GENERATION_SLOT = BoundedSemaphore(1)
+# Portrait adjustments are deliberately kept lightweight and separate from the
+# queued AI generation worker.  The queue itself has exactly one worker.
+PORTRAIT_ADJUSTMENT_SLOT = BoundedSemaphore(1)
 
 # Database imports
-from database import db, Agent, Certificate, SystemAsset, CSVUploadHistory
+from database import db, Agent, Certificate, SystemAsset, CSVUploadHistory, GenerationJob
 from db_services import (
     get_agent_by_client_code, get_all_agents, update_agent, delete_agent,
     import_agents_from_csv, get_recent_certificates, get_statistics,
@@ -123,6 +125,23 @@ NEON_COLORS = {
 }
 
 # Schema changes are applied explicitly by manage.py migrate.
+
+
+class GenerationAgentSnapshot:
+    """The immutable agent values used by a queued job.
+
+    A CSV import can change an agent while their photo is waiting.  Rendering
+    from this snapshot makes the finished poster match the request the user
+    actually submitted.
+    """
+    def __init__(self, job):
+        self.client_code = job.client_code_snapshot
+        self.agent_name = job.agent_name_snapshot
+        self.mdrt_tier = job.tier_snapshot
+        self._badges = [badge for badge in job.badges_snapshot.split(',') if badge in {'LM', 'HR', 'QC'}]
+
+    def get_badges(self):
+        return list(self._badges)
 
 def get_admin_asset_status():
     """Check which admin assets are uploaded (file-based + database)"""
@@ -748,48 +767,163 @@ def user_upload_photo():
     agent = get_agent_by_client_code(client_code)
     if not agent:
         abort(404, description='Client code not found.')
-    if not GENERATION_SLOT.acquire(blocking=False):
-        abort(429, description='The generator is busy. Please try again shortly.')
-    paths = []
-    metadata = None
+    owner = session.get('owner')
+    if not owner:
+        abort(403, description='Session expired. Refresh the page and try again.')
+
+    active_statuses = ('queued', 'processing')
+    if GenerationJob.query.filter(GenerationJob.status.in_(active_statuses)).count() >= app.config['GENERATION_QUEUE_MAX_JOBS']:
+        abort(429, description='The generation queue is full. Please try again shortly.')
+    if GenerationJob.query.filter_by(owner=owner).filter(GenerationJob.status.in_(active_statuses)).count() >= app.config['GENERATION_QUEUE_PER_OWNER']:
+        abort(429, description='You already have photos waiting to be processed. Please wait for them to finish.')
+
+    photo_path = None
+    job = None
     try:
         image = validated_image(upload)
         if image.width < 100 or image.height < 100:
             abort(400, description='Photo must be at least 100 pixels wide and high.')
         identifier = uuid4().hex
-        temp_path = Path(USER_UPLOADS_FOLDER) / f'{identifier}.png'
-        photo_path = Path(USER_PHOTOS_FOLDER) / f'{identifier}_original.png'
-        paths.extend([temp_path, photo_path])
-        atomic_image_save(image, temp_path)
-        shutil.copyfile(temp_path, photo_path)
-        filename, cert_path, metadata = generate_certificate_for_agent(agent, str(temp_path))
-        paths.append(Path(cert_path))
-        certificate = Certificate(
-            agent_id=agent.id, filename=filename, filepath=cert_path,
-            file_size=Path(cert_path).stat().st_size,
-            original_photo_filename=photo_path.name, original_photo_filepath=str(photo_path),
-            original_photo_size=photo_path.stat().st_size, generated_by=session['owner'],
+        photo_path = safe_path(USER_PHOTOS_FOLDER, f'{identifier}_original.png')
+        atomic_image_save(image, photo_path)
+        job = GenerationJob(
+            id=identifier, owner=owner, status='queued', agent_id=agent.id,
             client_code_snapshot=agent.client_code, agent_name_snapshot=agent.agent_name,
             tier_snapshot=agent.mdrt_tier, badges_snapshot=','.join(agent.get_badges()),
-            render_metadata=metadata)
-        db.session.add(certificate)
+            photo_filename=photo_path.name, photo_size=photo_path.stat().st_size,
+        )
+        db.session.add(job)
         db.session.commit()
-        return jsonify(success=True, certificate_file=filename,
-                       certificate={'id': certificate.id, 'filename': filename, 'editable': bool(metadata.get('editor'))},
-                       agent_info={'name': agent.agent_name, 'client_code': agent.client_code,
-                                   'tier': agent.mdrt_tier, 'badges': agent.get_badges()})
     except Exception:
+        db.session.rollback()
+        if photo_path:
+            photo_path.unlink(missing_ok=True)
+        raise
+
+    try:
+        rq_job = enqueue_generation(app, job.id)
+        job.rq_job_id = rq_job.id
+        db.session.commit()
+    except Exception:
+        # Do not retain a photo that cannot ever be processed.  The job was
+        # committed first so a worker can never see an uncommitted row.
+        app.logger.exception('Unable to enqueue certificate generation')
+        db.session.rollback()
+        stored_job = db.session.get(GenerationJob, job.id)
+        if stored_job:
+            db.session.delete(stored_job)
+            db.session.commit()
+        photo_path.unlink(missing_ok=True)
+        abort(503, description='The generation queue is temporarily unavailable. Please try again later.')
+
+    return jsonify(success=True, job=generation_job_payload(job)), 202
+
+
+def require_generation_job_access(job):
+    if not job or (not session.get('admin') and (not session.get('owner') or job.owner != session['owner'])):
+        abort(404, description='Generation request not found.')
+
+
+def generation_job_payload(job):
+    """Return public job state without exposing stored photo paths."""
+    payload = {
+        'id': job.id,
+        'status': job.status,
+        'created_at': job.created_at.isoformat() if job.created_at else None,
+        'started_at': job.started_at.isoformat() if job.started_at else None,
+        'finished_at': job.finished_at.isoformat() if job.finished_at else None,
+    }
+    if job.status == 'queued':
+        # With one RQ worker, jobs in progress and earlier queued records are
+        # ahead of this request.  The queue is bounded, so this small query is
+        # also bounded.
+        processing = GenerationJob.query.filter_by(status='processing').count()
+        ahead = GenerationJob.query.filter(
+            GenerationJob.status == 'queued',
+            GenerationJob.created_at < job.created_at,
+        ).count()
+        position = processing + ahead + 1
+        payload.update(queue_position=position,
+                       estimated_wait_seconds=position * app.config['GENERATION_ESTIMATED_SECONDS'])
+    elif job.status == 'processing':
+        payload.update(queue_position=1,
+                       estimated_wait_seconds=app.config['GENERATION_ESTIMATED_SECONDS'])
+    if job.status == 'completed' and job.certificate:
+        certificate = job.certificate
+        payload.update(
+            certificate_file=certificate.filename,
+            certificate={'id': certificate.id, 'filename': certificate.filename,
+                         'editable': bool((certificate.render_metadata or {}).get('editor'))},
+            agent_info={'name': job.agent_name_snapshot, 'client_code': job.client_code_snapshot,
+                        'tier': job.tier_snapshot, 'badges': [badge for badge in job.badges_snapshot.split(',') if badge]},
+        )
+    elif job.status == 'failed':
+        payload['error'] = job.error or 'Unable to generate the poster. Please try again.'
+    return payload
+
+
+@app.get('/api/user/generation-jobs/<job_id>')
+def user_generation_job_status(job_id):
+    job = db.session.get(GenerationJob, job_id)
+    require_generation_job_access(job)
+    return jsonify(success=True, job=generation_job_payload(job))
+
+
+def process_generation_job(generation_id):
+    """Run by the dedicated RQ worker; it never depends on request state."""
+    photo_path = None
+    output_path = None
+    metadata = None
+    try:
+        job = db.session.get(GenerationJob, generation_id)
+        if not job or job.status != 'queued':
+            return {'id': generation_id, 'status': 'skipped'}
+        job.status = 'processing'
+        job.started_at = datetime.now()
+        db.session.commit()
+
+        photo_path = safe_path(USER_PHOTOS_FOLDER, job.photo_filename)
+        if not photo_path.is_file():
+            raise BadRequest('The queued photo is no longer available. Please upload it again.')
+        agent = GenerationAgentSnapshot(job)
+        filename, cert_path, metadata = generate_certificate_for_agent(agent, str(photo_path))
+        output_path = safe_path(USER_OUTPUTS_FOLDER, filename)
+        certificate = Certificate(
+            agent_id=job.agent_id if db.session.get(Agent, job.agent_id) else None,
+            filename=filename, filepath=cert_path, file_size=output_path.stat().st_size,
+            original_photo_filename=photo_path.name, original_photo_filepath=str(photo_path),
+            original_photo_size=photo_path.stat().st_size, generated_by=job.owner,
+            client_code_snapshot=job.client_code_snapshot, agent_name_snapshot=job.agent_name_snapshot,
+            tier_snapshot=job.tier_snapshot, badges_snapshot=job.badges_snapshot,
+            render_metadata=metadata,
+        )
+        db.session.add(certificate)
+        db.session.flush()
+        job.certificate_id = certificate.id
+        job.status = 'completed'
+        job.error = None
+        job.finished_at = datetime.now()
+        db.session.commit()
+        return {'id': job.id, 'status': job.status, 'certificate_id': certificate.id}
+    except Exception as error:
         db.session.rollback()
         if metadata:
             discard_layers(USER_OUTPUTS_FOLDER, metadata.get('editor'))
-        for path in paths:
-            path.unlink(missing_ok=True)
+        if output_path:
+            output_path.unlink(missing_ok=True)
+        if photo_path:
+            photo_path.unlink(missing_ok=True)
+        app.logger.exception('Certificate generation job %s failed', generation_id)
+        failure = db.session.get(GenerationJob, generation_id)
+        if failure:
+            failure.status = 'failed'
+            failure.finished_at = datetime.now()
+            failure.error = error.description if isinstance(error, HTTPException) else 'Unable to generate the poster. Please try again with another photo.'
+            db.session.commit()
+            return {'id': failure.id, 'status': failure.status, 'error': failure.error}
         raise
     finally:
-        for path in paths:
-            if path.parent == Path(USER_UPLOADS_FOLDER):
-                path.unlink(missing_ok=True)
-        GENERATION_SLOT.release()
+        db.session.remove()
 
 
 def generate_certificate_for_agent(agent, photo_path):
@@ -1029,7 +1163,7 @@ def user_adjust_certificate(cert_id):
     if not isinstance(data, dict) or type(data.get('revision')) is not int or data['revision'] < 0:
         abort(400, description='Provide the current certificate revision.')
     transform = validate_transform(data.get('transform'))
-    if not GENERATION_SLOT.acquire(blocking=False):
+    if not PORTRAIT_ADJUSTMENT_SLOT.acquire(blocking=False):
         abort(429, description='The generator is busy. Please try again shortly.')
     new_path = None
     try:
@@ -1062,7 +1196,7 @@ def user_adjust_certificate(cert_id):
             new_path.unlink(missing_ok=True)
         raise
     finally:
-        GENERATION_SLOT.release()
+        PORTRAIT_ADJUSTMENT_SLOT.release()
 
 
 @app.route('/api/user/preview/<filename>', methods=['GET'])

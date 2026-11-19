@@ -1,0 +1,24 @@
+[Unit]
+Description=Prudential MDRT Certificate Generation Queue Worker
+After=network.target redis-server.service
+Wants=redis-server.service
+
+[Service]
+Type=simple
+User=aditya.developer
+WorkingDirectory=/home/aditya.developer/prudential/backend
+Environment="PATH=/home/aditya.developer/prudential/venv/bin:/usr/bin:/bin"
+Environment="TZ=Asia/Hong_Kong"
+Environment="OMP_NUM_THREADS=2"
+Environment="OPENBLAS_NUM_THREADS=2"
+ExecStart=/home/aditya.developer/prudential/venv/bin/rq worker --url redis://127.0.0.1:6379/0 --name prudential-generation-worker certificate-generation
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

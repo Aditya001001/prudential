@@ -5,12 +5,15 @@ import Loader from '../components/Loader';
 import PortraitEditor from '../components/PortraitEditor';
 import PosterPreview from '../components/PosterPreview';
 import useDialog from '../components/useDialog';
+import { localizeMessage } from '../messages';
 import './UserPortalNew.css';
 
+const GENERATION_JOB_STORAGE_KEY = 'prudential-generation-job';
 
 function UserPortalNew() {
   const [systemReady, setSystemReady] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [generationJob, setGenerationJob] = useState(null);
   const [result, setResult] = useState(null);
   const [editingPortrait, setEditingPortrait] = useState(false);
   const [posterReady, setPosterReady] = useState(false);
@@ -45,6 +48,92 @@ function UserPortalNew() {
   useEffect(() => {
     checkSystemStatus();
   }, []);
+
+  const completeGenerationJob = React.useCallback((job) => {
+    const certificate = job.certificate;
+    if (!certificate?.id || !job.certificate_file) return;
+    localStorage.removeItem(GENERATION_JOB_STORAGE_KEY);
+    setGenerationJob(job);
+    setResult({
+      agentInfo: job.agent_info,
+      certificateFile: job.certificate_file,
+      certificateId: certificate.id,
+      editable: certificate.editable,
+      timestamp: Date.now()
+    });
+    setSelectedFile(null);
+    setPreviewImage(null);
+    setPosterReady(false);
+    setUploading(false);
+    setStep(4);
+  }, []);
+
+  const applyGenerationJob = React.useCallback((job) => {
+    if (!job?.id) return;
+    if (job.status === 'completed') {
+      completeGenerationJob(job);
+      return;
+    }
+    if (job.status === 'failed') {
+      localStorage.removeItem(GENERATION_JOB_STORAGE_KEY);
+      setGenerationJob(job);
+      setUploading(false);
+      setStep(2);
+      setError(localizeMessage(job.error, '無法產生海報，請選擇其他照片後重試。'));
+      return;
+    }
+    setGenerationJob(job);
+    setUploading(true);
+  }, [completeGenerationJob]);
+
+  // A reload, backgrounded mobile browser or temporary network loss must not
+  // make the user lose a generation that is still safely waiting on the VM.
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(GENERATION_JOB_STORAGE_KEY));
+      if (saved?.id) {
+        setGenerationJob({ id: saved.id, status: 'queued' });
+        setUploading(true);
+      }
+    } catch {
+      localStorage.removeItem(GENERATION_JOB_STORAGE_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!generationJob?.id) return undefined;
+    let active = true;
+    let retryTimer;
+    const poll = async () => {
+      try {
+        const response = await axios.get(`${API_URL}/user/generation-jobs/${generationJob.id}`);
+        if (!active) return;
+        const job = response.data?.job;
+        applyGenerationJob(job);
+        if (!['completed', 'failed'].includes(job?.status)) {
+          retryTimer = window.setTimeout(poll, 2000);
+        }
+      } catch (error) {
+        if (error.response?.status === 404) {
+          localStorage.removeItem(GENERATION_JOB_STORAGE_KEY);
+          if (active) {
+            setGenerationJob(null);
+            setUploading(false);
+            setError(errorMessage(error, '找不到海報處理請求，請重新上傳照片。'));
+          }
+          return;
+        }
+        // Keep the durable job ID so a transient mobile connection can resume
+        // polling without asking the user to upload their photo again.
+        if (active) retryTimer = window.setTimeout(poll, 5000);
+      }
+    };
+    poll();
+    return () => {
+      active = false;
+      window.clearTimeout(retryTimer);
+    };
+  }, [generationJob?.id, applyGenerationJob]);
 
   const checkSystemStatus = async () => {
     try {
@@ -348,21 +437,14 @@ function UserPortalNew() {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
 
-      if (response.data.success) {
-        setResult({
-          agentInfo: response.data.agent_info,
-          certificateFile: response.data.certificate_file,
-          certificateId: response.data.certificate?.id,
-          editable: response.data.certificate?.editable,
-          timestamp: Date.now() // Add timestamp to bust cache
-        });
-        setSelectedFile(null);
-        setPreviewImage(null);
-        setStep(4); // Release the original preview once the generated poster is available.
+      if (response.data.success && response.data.job) {
+        localStorage.setItem(GENERATION_JOB_STORAGE_KEY, JSON.stringify({ id: response.data.job.id }));
+        applyGenerationJob(response.data.job);
+      } else {
+        throw new Error('Missing generation job.');
       }
     } catch (error) {
       setError(errorMessage(error, "無法產生海報，請重試。"));
-    } finally {
       setUploading(false);
     }
   };
@@ -378,6 +460,8 @@ function UserPortalNew() {
     setReadingPhoto(false);
     setEditingPortrait(false);
     setPosterReady(false);
+    localStorage.removeItem(GENERATION_JOB_STORAGE_KEY);
+    setGenerationJob(null);
     setResult(null);
     setError(null);
     currentCodeRef.current = '';
@@ -421,7 +505,7 @@ function UserPortalNew() {
   return (
     <div className="portal-wrapper">
       {error && <div className="request-error" role="alert">{error}</div>}
-      {uploading && <Loader message="正在產生海報" estimatedTime={15} />}
+      {uploading && <Loader job={generationJob} />}
       <canvas ref={canvasRef} style={{ display: 'none' }} />
 
       {/* Step 1: Enter Client Code */}

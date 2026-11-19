@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 from sqlalchemy import text
 from test_regressions import web
-from database import db, Certificate
+from database import db, Certificate, GenerationJob
 from migrations import upgrade
 
 
@@ -21,17 +21,19 @@ class MigrationTests(unittest.TestCase):
     def tearDown(self):
         db.session.remove()
         with db.engine.begin() as connection:
+            connection.exec_driver_sql('DROP TABLE IF EXISTS generation_jobs')
             connection.exec_driver_sql('DROP TABLE IF EXISTS certificates_before_v1')
             connection.exec_driver_sql('DROP TABLE IF EXISTS schema_migrations')
         db.drop_all();self.context.pop()
 
     def test_migration_preserves_orphans_and_recovers_client_code(self):
-        self.assertEqual(upgrade(),1)
+        self.assertEqual(upgrade(),2)
         cert=db.session.get(Certificate,1)
         self.assertIsNone(cert.agent_id);self.assertEqual(cert.client_code_snapshot,'00042')
         self.assertEqual(cert.agent_name_snapshot,'Historical Agent');self.assertEqual(cert.badges_snapshot,'')
         self.assertIsNone(cert.render_metadata)
-        self.assertEqual(upgrade(),1);self.assertEqual(Certificate.query.count(),1)
+        self.assertEqual(upgrade(),2);self.assertEqual(Certificate.query.count(),1)
+        self.assertEqual(GenerationJob.query.count(),0)
         with db.engine.connect() as connection:
             self.assertEqual(connection.exec_driver_sql('PRAGMA foreign_key_check').all(),[])
             self.assertEqual(connection.exec_driver_sql('PRAGMA foreign_keys').scalar(),1)

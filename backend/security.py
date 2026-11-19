@@ -21,7 +21,7 @@ def install_security(app):
     public = {'health_check', 'auth_session', 'auth_login', 'user_check_system',
               'validate_client_code', 'user_upload_photo', 'user_preview_certificate',
               'user_download_certificate', 'user_get_editor', 'user_get_editor_layer',
-              'user_adjust_certificate', 'serve_frontend'}
+              'user_adjust_certificate', 'user_generation_job_status', 'serve_frontend'}
 
     def throttle(key, maximum, seconds):
         now = time.monotonic()

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './Loader.css';
 
-const Loader = ({ message = "正在產生海報…", estimatedTime = 15 }) => {
+const Loader = ({ job, message, estimatedTime }) => {
   const [elapsed, setElapsed] = useState(0);
   const [dots, setDots] = useState('');
 
@@ -25,7 +25,16 @@ const Loader = ({ message = "正在產生海報…", estimatedTime = 15 }) => {
     };
   }, []);
 
-  const progress = Math.min((elapsed / estimatedTime) * 100, 95);
+  const queued = job?.status === 'queued';
+  const estimate = Math.max(1, job?.estimated_wait_seconds || estimatedTime || 15);
+  const queuePosition = job?.queue_position || 1;
+  // Do not pretend a waiting job is rendering.  Once a worker starts it, the
+  // normal elapsed rendering indicator resumes.
+  const progress = queued ? 8 : Math.min((elapsed / estimate) * 100, 95);
+  const title = message || (queued ? '海報已排入處理隊列' : '正在製作海報');
+  const subtitle = queued
+    ? (queuePosition > 1 ? `目前前方有 ${queuePosition - 1} 個海報正在等候處理` : '即將開始處理您的海報')
+    : '正在移除背景並製作您的 MDRT 海報，請稍候';
 
   return (
     <div className="loader-overlay">
@@ -39,17 +48,17 @@ const Loader = ({ message = "正在產生海報…", estimatedTime = 15 }) => {
             <div className="spinner-outer"></div>
           </div>
 
-          <h3 className="loader-title">{message}{dots}</h3>
+          <h3 className="loader-title">{title}{dots}</h3>
           
           <div className="loader-stats">
             <div className="stat-item">
-              <span className="stat-label">已用時間</span>
-              <span className="stat-value">{elapsed} 秒</span>
+              <span className="stat-label">{queued ? '隊列位置' : '已用時間'}</span>
+              <span className="stat-value">{queued ? `第 ${queuePosition} 位` : `${elapsed} 秒`}</span>
             </div>
             <div className="stat-divider"></div>
             <div className="stat-item">
               <span className="stat-label">預計時間</span>
-              <span className="stat-value">約 {estimatedTime} 秒</span>
+              <span className="stat-value">約 {estimate} 秒</span>
             </div>
           </div>
 
@@ -64,14 +73,14 @@ const Loader = ({ message = "正在產生海報…", estimatedTime = 15 }) => {
           </div>
 
           <p className="loader-subtitle">
-            正在製作您的 MDRT 海報，請稍候
+            {subtitle}
           </p>
 
           <div className="loader-steps">
-            <div className={`step-dot ${elapsed >= 1 ? 'active' : ''}`}></div>
-            <div className={`step-dot ${elapsed >= 5 ? 'active' : ''}`}></div>
-            <div className={`step-dot ${elapsed >= 10 ? 'active' : ''}`}></div>
-            <div className={`step-dot ${elapsed >= 15 ? 'active' : ''}`}></div>
+            <div className={`step-dot ${!queued && elapsed >= 1 ? 'active' : ''}`}></div>
+            <div className={`step-dot ${!queued && elapsed >= 5 ? 'active' : ''}`}></div>
+            <div className={`step-dot ${!queued && elapsed >= 10 ? 'active' : ''}`}></div>
+            <div className={`step-dot ${!queued && elapsed >= 15 ? 'active' : ''}`}></div>
           </div>
         </div>
       </div>

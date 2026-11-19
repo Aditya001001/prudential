@@ -197,6 +197,30 @@ class CSVUploadHistory(db.Model):
         }
 
 
+class GenerationJob(db.Model):
+    """Durable certificate-generation queue state, scoped to its creating browser."""
+    __tablename__ = 'generation_jobs'
+
+    id = db.Column(db.String(32), primary_key=True)
+    owner = db.Column(db.String(100), nullable=False, index=True)
+    status = db.Column(db.String(20), nullable=False, default='queued', index=True)
+    agent_id = db.Column(db.Integer, nullable=True)
+    client_code_snapshot = db.Column(db.String(20), nullable=False)
+    agent_name_snapshot = db.Column(db.String(200), nullable=False)
+    tier_snapshot = db.Column(db.String(10), nullable=False)
+    badges_snapshot = db.Column(db.String(50), nullable=False, default='')
+    photo_filename = db.Column(db.String(255), nullable=False)
+    photo_size = db.Column(db.Integer, nullable=False)
+    rq_job_id = db.Column(db.String(64), unique=True, nullable=True)
+    certificate_id = db.Column(db.Integer, db.ForeignKey('certificates.id', ondelete='SET NULL'), nullable=True)
+    error = db.Column(db.String(500), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.now, nullable=False, index=True)
+    started_at = db.Column(db.DateTime, nullable=True)
+    finished_at = db.Column(db.DateTime, nullable=True)
+
+    certificate = db.relationship('Certificate', foreign_keys=[certificate_id])
+
+
 # Enforce SQLite references on every application connection.
 from sqlalchemy import event
 from sqlalchemy.engine import Engine

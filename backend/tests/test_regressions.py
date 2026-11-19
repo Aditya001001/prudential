@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from datetime import datetime
+from types import SimpleNamespace
 
 os.environ['DATABASE_URL'] = 'sqlite:///:memory:'
 os.environ['COOKIE_SECURE'] = 'false'
@@ -16,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from werkzeug.security import generate_password_hash
 from PIL import Image
 import app_with_db as web
-from database import db, Agent, Certificate, SystemAsset, CSVUploadHistory
+from database import db, Agent, Certificate, SystemAsset, CSVUploadHistory, GenerationJob
 from db_services import create_agent, create_certificate, import_agents_from_csv, update_agent
 from storage import staged_delete, safe_path
 
@@ -209,31 +210,66 @@ class Regressions(unittest.TestCase):
 
     def test_failed_generation_cleans_up_files(self):
         token=self.bootstrap()
-        with self.assertLogs(web.app.logger, level='ERROR'), patch.object(web,'generate_certificate_for_agent',side_effect=RuntimeError('failed')):
+        with patch.object(web, 'enqueue_generation', return_value=SimpleNamespace(id='rq-failed')):
             response=self.client.post('/api/user/upload-photo',data={'client_code':'00001','photo':(png(),'portrait.png')},headers={'X-CSRF-Token':token})
-        self.assertEqual(response.status_code,500)
+        self.assertEqual(response.status_code,202)
+        with self.assertLogs(web.app.logger, level='ERROR'), patch.object(web,'generate_certificate_for_agent',side_effect=RuntimeError('failed')):
+            result = web.process_generation_job(response.json['job']['id'])
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(GenerationJob.query.one().status, 'failed')
         for folder in ('USER_UPLOADS_FOLDER','USER_PHOTOS_FOLDER','USER_OUTPUTS_FOLDER'):
             self.assertEqual(list(Path(getattr(web,folder)).iterdir()),[])
 
-    def test_busy_generator_rejects_without_writing_files(self):
-        token=self.bootstrap();web.GENERATION_SLOT.acquire()
+    def test_per_owner_queue_limit_rejects_without_writing_files(self):
+        token=self.bootstrap()
+        original = web.app.config['GENERATION_QUEUE_PER_OWNER']
+        web.app.config['GENERATION_QUEUE_PER_OWNER'] = 1
         try:
+            with patch.object(web, 'enqueue_generation', return_value=SimpleNamespace(id='rq-first')):
+                first=self.client.post('/api/user/upload-photo',data={'client_code':'00001','photo':(png(),'portrait.png')},headers={'X-CSRF-Token':token})
+            self.assertEqual(first.status_code,202)
             response=self.client.post('/api/user/upload-photo',data={'client_code':'00001','photo':(png(),'portrait.png')},headers={'X-CSRF-Token':token})
             self.assertEqual(response.status_code,429)
-        finally:web.GENERATION_SLOT.release()
+            self.assertEqual(len(list(Path(web.USER_PHOTOS_FOLDER).iterdir())),1)
+        finally:
+            web.app.config['GENERATION_QUEUE_PER_OWNER'] = original
 
     def test_generation_records_owner_and_snapshots(self):
         token=self.bootstrap()
         def generate(agent,path):
             output=Path(web.USER_OUTPUTS_FOLDER)/'unique.png'; output.write_bytes(png().getvalue())
             return output.name,str(output),{'renderer_version':2}
-        with patch.object(web,'generate_certificate_for_agent',side_effect=generate):
+        with patch.object(web, 'enqueue_generation', return_value=SimpleNamespace(id='rq-complete')):
             response=self.client.post('/api/user/upload-photo',data={'client_code':'00001','photo':(png(),'portrait.png')},headers={'X-CSRF-Token':token})
-        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.status_code,202)
+        with patch.object(web,'generate_certificate_for_agent',side_effect=generate):
+            result = web.process_generation_job(response.json['job']['id'])
+        self.assertEqual(result['status'], 'completed')
         cert=Certificate.query.one();self.assertEqual(cert.client_code_snapshot,'00001');self.assertTrue(cert.generated_by)
         self.assertEqual(list(Path(web.USER_UPLOADS_FOLDER).iterdir()),[])
         with self.client.get('/api/user/download/unique.png') as response:self.assertEqual(response.status_code,200)
         db.session.refresh(cert);self.assertEqual(cert.download_count,1)
+
+    def test_generation_status_is_scoped_to_the_creating_browser(self):
+        token=self.bootstrap()
+        with patch.object(web, 'enqueue_generation', return_value=SimpleNamespace(id='rq-status')):
+            response=self.client.post('/api/user/upload-photo',data={'client_code':'00001','photo':(png(),'portrait.png')},headers={'X-CSRF-Token':token})
+        self.assertEqual(response.status_code,202)
+        job_id=response.json['job']['id']
+        status=self.client.get(f'/api/user/generation-jobs/{job_id}')
+        self.assertEqual(status.status_code,200)
+        self.assertEqual(status.json['job']['status'],'queued')
+        self.assertEqual(status.json['job']['queue_position'],1)
+        other=self.new_client();self.bootstrap(other)
+        self.assertEqual(other.get(f'/api/user/generation-jobs/{job_id}').status_code,404)
+
+    def test_unavailable_queue_removes_stored_photo_and_job(self):
+        token=self.bootstrap()
+        with self.assertLogs(web.app.logger, level='ERROR'), patch.object(web, 'enqueue_generation', side_effect=OSError('redis down')):
+            response=self.client.post('/api/user/upload-photo',data={'client_code':'00001','photo':(png(),'portrait.png')},headers={'X-CSRF-Token':token})
+        self.assertEqual(response.status_code,503)
+        self.assertEqual(GenerationJob.query.count(),0)
+        self.assertEqual(list(Path(web.USER_PHOTOS_FOLDER).iterdir()),[])
 
     def test_renderer_fits_tall_portrait_and_has_fixed_dimensions(self):
         path=Path(web.ADMIN_ASSETS_FOLDER)/'backgrounds/MDRT.png';path.write_bytes(png((600,900)).getvalue())

@@ -8,9 +8,9 @@ from pathlib import Path
 from datetime import datetime
 import sqlite3
 from sqlalchemy.schema import CreateTable
-from database import db, Certificate
+from database import db, Certificate, GenerationJob
 
-VERSION = 1
+VERSION = 2
 
 
 def upgrade():
@@ -51,7 +51,12 @@ def upgrade():
                         connection.exec_driver_sql('UPDATE certificates SET agent_id=?, client_code_snapshot=?, agent_name_snapshot=?, tier_snapshot=?, badges_snapshot=? WHERE id=?', (row['agent_id'] if agent else None, code, name, tier, badges, row['id']))
                     connection.exec_driver_sql('DROP TABLE certificates_before_v1')
                 if not done:
-                    connection.exec_driver_sql('INSERT INTO schema_migrations VALUES (?, ?)', (VERSION, datetime.now().isoformat()))
+                    connection.exec_driver_sql('INSERT INTO schema_migrations VALUES (?, ?)', (1, datetime.now().isoformat()))
+                queue_done = connection.exec_driver_sql('SELECT version FROM schema_migrations WHERE version=2').first()
+                if not queue_done:
+                    connection.execute(CreateTable(GenerationJob.__table__, if_not_exists=True))
+                    connection.exec_driver_sql('CREATE INDEX IF NOT EXISTS ix_generation_jobs_status_created_at ON generation_jobs (status, created_at)')
+                    connection.exec_driver_sql('INSERT INTO schema_migrations VALUES (?, ?)', (2, datetime.now().isoformat()))
         finally:
             connection.exec_driver_sql('PRAGMA foreign_keys=ON')
             connection.commit()

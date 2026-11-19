@@ -53,8 +53,8 @@ This section supersedes older implementation and deployment examples below.
 - **Imports:** CSV, XLSX and XLS imports validate required fields, tiers, duplicates and explicit badge values before changing anything. `No`, `False`, `0` and blank mean false. Imports are atomic **merges**: omitted agents remain. Invalid files return errors and do not replace current metadata or create archive records.
 - **History:** Deleting agents or clearing master data retains certificates with nullable agent references and immutable snapshots. Migration v1 repairs legacy orphan references, fills missing snapshots where recoverable, and preserves existing certificate files. Badges in historical responses come only from their snapshots.
 - **Storage:** Images are decoded and validated, normalized to PNG, and saved atomically with UUID identifiers. Asset uploads create immutable versions. New certificates record asset hashes, layout/font settings and renderer metadata. Failure cleanup removes new files; deletion restores staged files when a database transaction fails. Original portraits are removed with their last certificate reference. `manage.py audit` reports historical unreferenced files without deleting them. `manage.py quarantine` moves unreferenced files older than one hour into a private backup with a restoration manifest.
-- **Rendering:** Output is always 1800×3184. Portraits fit both width and height without extending outside the photo box. Background removal enlarges only the alpha mask, retaining original portrait detail. Displayed uppercase names are measured with space for the 3D effect. One generation runs at a time; excess requests receive a visible retry message instead of unbounded processing. The AI model loads lazily.
-- **Runtime:** Gunicorn, one worker/four threads, bound to `127.0.0.1:5001`; debug is disabled. Keep one worker because generation concurrency and request throttles are process-local. Backend HKT timestamps are preserved via `TZ=Asia/Hong_Kong` in the service. Validated runtime: Python 3.14 and Node 22. Backend dependencies are pinned in `backend/requirements.txt`; root requirements delegate to that list.
+- **Rendering and queue:** Output is always 1800×3184. Portraits fit both width and height without extending outside the photo box. Background removal enlarges only the alpha mask, retaining original portrait detail. Displayed uppercase names are measured with space for the 3D effect. Photo uploads are stored first, then placed in the persistent Redis/RQ queue. The dedicated `prudential-generation-worker.service` processes exactly one heavy AI generation at a time, while Gunicorn remains responsive. The queue is capped at 25 active jobs and two active jobs per browser by default; the UI shows queued/processing state and resumes polling after a refresh. The AI model loads lazily in the worker.
+- **Runtime:** Gunicorn, one worker/four threads, bound to `127.0.0.1:5001`; debug is disabled. Redis is loopback-only and RQ runs in a second systemd service. Backend HKT timestamps are preserved via `TZ=Asia/Hong_Kong` in the services. Validated runtime: Python 3.14 and Node 22. Backend dependencies are pinned in `backend/requirements.txt`; root requirements delegate to that list.
 - **Frontend:** Loading/retry states, visible request errors, cancelled stale validation, and server-side history pagination. API configuration is centralized. Development uses `setupProxy.js`; production keeps the Nginx `/prudential-api` prefix.
 - **Supported deployment:** VM/systemd/Nginx/SQLite. The nonfunctional Render manifest was removed. Older backend entry points forward to the supported secured application. Historical notes remain for reference.
 
@@ -70,11 +70,15 @@ CI=true npm test -- --watchAll=false --runInBand
 CI=true npm run build              # builds build-staged only
 cd ..
 venv/bin/python backend/manage.py backup
-sudo systemctl stop prudential-backend.service
+sudo apt-get update
+sudo apt-get install -y redis-server
+sudo systemctl enable --now redis-server
 venv/bin/python backend/manage.py migrate  # explicit, versioned, backed up
 sudo install -m 644 prudential-backend.service /etc/systemd/system/prudential-backend.service
+sudo install -m 644 prudential-generation-worker.service /etc/systemd/system/prudential-generation-worker.service
 sudo systemctl daemon-reload
-sudo systemctl start prudential-backend.service
+sudo systemctl restart prudential-backend.service
+sudo systemctl enable --now prudential-generation-worker.service
 curl --fail http://127.0.0.1:5001/api/health
 cd frontend
 npm run publish                    # publish only after backend is ready
@@ -186,6 +190,14 @@ cd /home/aditya.developer/prudential
 │  • Image processing (Pillow)                       │
 │  • SQLite database (mdrt_certificates.db)           │
 └─────────────────────────────────────────────────┘
+                    │ queued job IDs
+                    ▼
+┌─────────────────────────────────────────────────┐
+│ Redis + RQ worker (loopback-only, systemd)        │
+│ "prudential-generation-worker.service"            │
+│ • one AI/Pillow generation at a time               │
+│ • jobs survive browser reloads and backend restarts│
+└─────────────────────────────────────────────────┘
 ```
 
 **Important:** The React frontend is **NOT** run as a live server (no `npm start`/port 3001 in production). It's built once with `npm run build` and Nginx serves the static files directly from `frontend/build/`. Any frontend change requires a rebuild + the files are picked up immediately (no restart needed, but browsers may cache — hard refresh when testing).
@@ -203,7 +215,9 @@ cd /home/aditya.developer/prudential
 /home/aditya.developer/prudential/
 ├── backend/
 │   ├── app_with_db.py          # Main Flask application (DATABASE VERSION — use this, not app.py)
-│   ├── database.py             # SQLAlchemy models (Agent, Certificate, SystemAsset, CSVUploadHistory)
+│   ├── database.py             # SQLAlchemy models (including durable GenerationJob records)
+│   ├── generation_queue.py     # Redis/RQ enqueue integration
+│   ├── generation_worker.py    # Dedicated background job entry point
 │   ├── db_services.py          # Database helper functions (CRUD, CSV/Excel import, history)
 │   ├── init_db.py              # Database initialization CLI script
 │   ├── requirements.txt        # Python dependencies (pandas, openpyxl, Flask, rembg, etc.)
@@ -236,12 +250,15 @@ cd /home/aditya.developer/prudential
 
 ## 🚀 Starting & Stopping Services
 
-The backend runs as a **systemd service** called `prudential-backend.service`. The frontend has **no running process** — it's a static build served by Nginx.
+The backend and the single generation worker run as systemd services: `prudential-backend.service` and `prudential-generation-worker.service`. Redis is a required loopback-only service. The frontend has **no running process** — it's a static build served by Nginx.
 
 ### Check Service Status
 ```bash
 # Backend service status
 sudo systemctl status prudential-backend.service --no-pager
+
+# Queue and worker status
+sudo systemctl status redis-server prudential-generation-worker.service --no-pager
 
 # Is it listening on port 5001?
 ss -tlnp | grep 5001
