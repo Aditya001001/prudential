@@ -89,7 +89,7 @@ test('photo guidance and requirements are visible in Chinese before choosing a f
   expect(container.textContent).not.toContain('Client code found.');
   await act(async () => Simulate.click(container.querySelector('button')));
   expect(container.querySelector('#photo-upload-guidance').textContent).toBe('請上載清晰半身職業照，面部清楚可見。');
-  expect(container.querySelector('#photo-upload-requirements').textContent).toContain('少於 50 MB');
+  expect(container.querySelector('#photo-upload-requirements').textContent).toContain('不超過 5 MB');
   expect(container.querySelector('#photo-upload-requirements').textContent).toContain('1,000 × 1,500 像素');
   expect(container.querySelector('#file-upload').files).toHaveLength(0);
   expect(container.querySelector('#file-upload').accept).toBe('image/png,image/jpeg');

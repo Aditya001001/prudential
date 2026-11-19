@@ -55,6 +55,8 @@ def install_security(app):
             supplied = request.headers.get('X-CSRF-Token', '')
             if not expected or not hmac.compare_digest(expected.encode(), supplied.encode()):
                 abort(403, description='Session expired. Refresh the page and try again.')
+        if request.endpoint == 'user_upload_photo' and request.content_length and request.content_length > app.config['USER_PHOTO_MAX_REQUEST_BYTES']:
+            abort(413, description='Photo upload exceeds the 5 MB limit.')
         if request.endpoint == 'auth_login':
             throttle(('login', request.remote_addr), 10, 900)
         elif request.endpoint == 'validate_client_code':

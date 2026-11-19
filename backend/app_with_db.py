@@ -10,7 +10,10 @@ from datetime import datetime
 from copy import deepcopy
 from config import configure, BASE_DIR
 from security import install_security, require_certificate_access
-from storage import validated_image, safe_path, atomic_image_save, fingerprint, staged_delete
+from storage import (
+    validated_image, validated_photo, safe_path, atomic_image_save,
+    atomic_photo_save, fingerprint, staged_delete,
+)
 from nametag_layout import fit_nametag
 from generation_queue import enqueue_generation
 
@@ -780,12 +783,12 @@ def user_upload_photo():
     photo_path = None
     job = None
     try:
-        image = validated_image(upload)
+        image = validated_photo(upload)
         if image.width < 100 or image.height < 100:
             abort(400, description='Photo must be at least 100 pixels wide and high.')
         identifier = uuid4().hex
-        photo_path = safe_path(USER_PHOTOS_FOLDER, f'{identifier}_original.png')
-        atomic_image_save(image, photo_path)
+        photo_path = safe_path(USER_PHOTOS_FOLDER, f'{identifier}_original.jpg')
+        atomic_photo_save(image, photo_path)
         job = GenerationJob(
             id=identifier, owner=owner, status='queued', agent_id=agent.id,
             client_code_snapshot=agent.client_code, agent_name_snapshot=agent.agent_name,

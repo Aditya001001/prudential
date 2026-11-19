@@ -41,8 +41,8 @@ export async function logout() {
 }
 
 export function errorMessage(error, fallback = '無法完成操作，請重試。') {
-  if (error.response?.status === 413) return '檔案容量超過上傳限制，請使用少於 50 MB 的檔案後再試。';
   const data = error.response?.data;
+  if (error.response?.status === 413) return localizeMessage(data?.error, '檔案容量超過伺服器上限。使用者照片不可超過 5 MB，請選擇較小的檔案後再試。');
   const summary = localizeMessage(data?.error, fallback);
   return Array.isArray(data?.errors) && data.errors.length
     ? `${summary} ${data.errors.map(value => localizeMessage(value, '資料格式無效，請檢查後重試。')).join(' ')}`

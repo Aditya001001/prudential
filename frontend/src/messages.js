@@ -16,6 +16,9 @@ const messages = {
   'Background dimensions must be at least 300 pixels.': '背景圖片的寬度及高度均須至少為 300 像素。',
   'Upload a PNG or JPEG image.': '請上傳 PNG 或 JPEG 圖片。',
   'Image resolution exceeds 25 megapixels. Reduce its dimensions and try again.': '圖片解像度超過 2,500 萬像素，請縮小圖片尺寸後再上傳。檔案容量較小並不代表解像度符合限制。',
+  'Image resolution exceeds the 50 megapixel processing limit.': '圖片解像度超過 5,000 萬像素的安全處理上限，請先縮小圖片尺寸後再上傳。',
+  'Photo could not be compressed below the 5 MB storage limit. Please use a simpler image.': '圖片無法在保留足夠品質下壓縮至 5 MB，請選擇較小或較簡單的照片。',
+  'Photo upload exceeds the 5 MB limit.': '檔案容量超過 5 MB 上限，請選擇較小的照片後再試。',
   'Image cannot be decoded. Export a new PNG or JPEG and try again.': '無法讀取圖片內容，檔案可能已損壞或編碼不受支援。請重新匯出為 PNG 或 JPEG 後再上傳。',
   'Image must be PNG/JPEG and no larger than 25 megapixels.': '圖片須為 PNG 或 JPEG 格式，且不可超過 2,500 萬像素。',
   'The uploaded image is corrupt or too large.': '上傳的圖片已損壞或過大。',
@@ -55,7 +58,7 @@ const messages = {
   'Provide portrait size and horizontal/vertical position.': '請提供肖像照大小及水平、垂直位置。',
   'Portrait size must be 25–250%; position must remain within the adjustment range.': '肖像照大小須介乎 25% 至 250%，位置須在可調整範圍內。',
   'Keep part of your portrait inside the certificate.': '請將肖像照的部分範圍保留在海報內。',
-  'The data value transmitted exceeds the capacity limit.': '檔案過大，照片檔案須小於 50 MB。',
+  'The data value transmitted exceeds the capacity limit.': '檔案過大，使用者照片不得超過 5 MB。',
   'The browser (or proxy) sent a request that this server could not understand.': '請求內容無效，請檢查後重試。',
   'The requested URL was not found on the server. If you entered the URL manually please check your spelling and try again.': '找不到所需的內容，請重新整理頁面後再試。',
 };
@@ -68,10 +71,12 @@ const fieldNames = {
 export function localizeMessage(message, fallback = '無法完成操作，請重試。') {
   if (typeof message !== 'string' || !message.trim()) return fallback;
   if (Object.prototype.hasOwnProperty.call(messages, message)) return messages[message];
-  const resolution = message.match(/^Image resolution (\d+)x(\d+) exceeds 25 megapixels\.$/);
+  const fileSize = message.match(/^Photo file size (\d+(?:\.\d+)?) MB exceeds the 5 MB limit\.$/);
+  if (fileSize) return `檔案容量為 ${fileSize[1]} MB，超過 5 MB 上限。請選擇較小的照片後再試。`;
+  const resolution = message.match(/^Image resolution (\d+)x(\d+) exceeds(?: the)? (\d+) megapixel(?: processing)? limit\.$/);
   if (resolution) {
-    const width = Number(resolution[1]), height = Number(resolution[2]);
-    return `圖片尺寸為 ${width.toLocaleString('zh-HK')} × ${height.toLocaleString('zh-HK')} 像素（約 ${(width * height / 1000000).toFixed(1)} 百萬像素），超過 2,500 萬像素上限。請縮小圖片尺寸後再上傳；檔案容量低於 50 MB 仍須符合此限制。`;
+    const width = Number(resolution[1]), height = Number(resolution[2]), limit = Number(resolution[3]);
+    return `圖片尺寸為 ${width.toLocaleString('zh-HK')} × ${height.toLocaleString('zh-HK')} 像素（約 ${(width * height / 1000000).toFixed(1)} 百萬像素），超過 ${(limit * 100).toLocaleString('zh-HK')} 萬像素的安全處理上限。請縮小圖片尺寸後再上傳。`;
   }
   const row = message.match(/^Row (\d+): (.*)$/s);
   if (row) return `第 ${row[1]} 列：${localizeMessage(row[2], '資料格式無效，請檢查後重試。')}`;

@@ -9,6 +9,8 @@ import { localizeMessage } from '../messages';
 import './UserPortalNew.css';
 
 const GENERATION_JOB_STORAGE_KEY = 'prudential-generation-job';
+const PHOTO_MAX_BYTES = 5 * 1024 * 1024;
+const PHOTO_MAX_PIXELS = 25_000_000;
 
 function UserPortalNew() {
   const [systemReady, setSystemReady] = useState(null);
@@ -217,8 +219,12 @@ function UserPortalNew() {
     event.target.value = '';
     discardPendingPhoto();
     setReadingPhoto(false);
-    if (!['image/png', 'image/jpeg'].includes(file.type) || file.size > 50 * 1024 * 1024) {
-      setError('請選擇小於 50 MB 的 PNG 或 JPEG 圖片。');
+    if (!['image/png', 'image/jpeg'].includes(file.type)) {
+      setError('請選擇 PNG 或 JPEG 圖片。');
+      return;
+    }
+    if (file.size > PHOTO_MAX_BYTES) {
+      setError(`檔案容量為 ${(file.size / 1024 / 1024).toFixed(2)} MB，超過 5 MB 上限。請選擇較小的照片。`);
       return;
     }
     setError(null);
@@ -245,7 +251,15 @@ function UserPortalNew() {
         const MIN_HEIGHT = 1500;
         const IDEAL_WIDTH = 1200;
         const IDEAL_HEIGHT = 1800;
-        if (width < MIN_WIDTH || height < MIN_HEIGHT) {
+        if (width * height > PHOTO_MAX_PIXELS) {
+          const scale = Math.sqrt(PHOTO_MAX_PIXELS / (width * height));
+          const resizedWidth = Math.floor(width * scale);
+          const resizedHeight = Math.floor(height * scale);
+          setResolutionWarning({
+            level: 'warning',
+            message: `圖片尺寸為 ${width.toLocaleString()} × ${height.toLocaleString()} 像素（${megapixels.toFixed(2)} 百萬像素）。系統會自動調整至約 ${resizedWidth.toLocaleString()} × ${resizedHeight.toLocaleString()} 像素，以符合 2,500 萬像素上限並保留海報所需品質。`
+          });
+        } else if (width < MIN_WIDTH || height < MIN_HEIGHT) {
           setResolutionWarning({
             level: 'error',
             message: `解像度偏低：${width} × ${height} 像素（${megapixels.toFixed(2)} 百萬像素）。為獲得最佳效果，請上傳至少 ${MIN_WIDTH} × ${MIN_HEIGHT} 像素（150 萬像素）的照片；否則照片可能顯得模糊。`
@@ -634,9 +648,9 @@ function UserPortalNew() {
                     <p id="photo-upload-guidance">請上載清晰半身職業照，面部清楚可見。</p>
                     <ul id="photo-upload-requirements">
                       <li><strong>檔案格式：</strong> JPG／JPEG 或 PNG</li>
-                      <li><strong>檔案大小：</strong> 少於 50 MB</li>
+                      <li><strong>檔案大小：</strong> 不超過 5 MB</li>
                       <li><strong>最低建議解像度：</strong> 1,000 × 1,500 像素</li>
-                      <li><strong>最高解像度：</strong> 2,500 萬像素</li>
+                      <li><strong>解像度：</strong> 超過 2,500 萬像素時會自動縮小</li>
                     </ul>
                   </div>
                 </div>

@@ -8,29 +8,117 @@ from uuid import uuid4
 from PIL import Image, ImageOps, UnidentifiedImageError
 from werkzeug.exceptions import BadRequest
 
+# Certificates render at 1800 × 3184 (under 6 megapixels), so a 25-megapixel
+# source leaves ample detail while avoiding unnecessarily large stored photos.
 MAX_PIXELS = 25_000_000
-Image.MAX_IMAGE_PIXELS = MAX_PIXELS
+MAX_PHOTO_PROCESSING_PIXELS = 50_000_000
+MAX_PHOTO_UPLOAD_BYTES = 5 * 1024 * 1024
+Image.MAX_IMAGE_PIXELS = MAX_PHOTO_PROCESSING_PIXELS
 
 
 def validated_image(upload):
+    """Validate an administrator image; its dimensions must already fit."""
+    return _decode_image(upload, maximum_pixels=MAX_PIXELS)
+
+
+def validated_photo(upload):
+    """Validate a user portrait and reduce a safe high-resolution source.
+
+    The input limit protects the upload endpoint and the normalized image is
+    constrained before it is ever placed in the generation queue.  We permit
+    up to 50 MP solely to automatically resize modern phone photos down to
+    the 25 MP working limit.
+    """
+    return _decode_image(
+        upload,
+        maximum_pixels=MAX_PHOTO_PROCESSING_PIXELS,
+        output_pixels=MAX_PIXELS,
+        maximum_bytes=MAX_PHOTO_UPLOAD_BYTES,
+    )
+
+
+def _upload_size(upload):
+    stream = upload.stream
+    position = stream.tell()
+    stream.seek(0, os.SEEK_END)
+    size = stream.tell()
+    stream.seek(position)
+    return size
+
+
+def _scaled_size(width, height, maximum_pixels):
+    scale = (maximum_pixels / (width * height)) ** 0.5
+    scaled = max(1, int(width * scale)), max(1, int(height * scale))
+    while scaled[0] * scaled[1] > maximum_pixels:
+        scaled = scaled[0], scaled[1] - 1
+    return scaled
+
+
+def _decode_image(upload, *, maximum_pixels, output_pixels=None, maximum_bytes=None):
     if Path(upload.filename or '').suffix.lower() not in {'.png', '.jpg', '.jpeg'}:
         raise BadRequest('Upload a PNG or JPEG image.')
+    if maximum_bytes is not None:
+        size = _upload_size(upload)
+        if size > maximum_bytes:
+            raise BadRequest(
+                f'Photo file size {size / 1024 / 1024:.2f} MB exceeds the 5 MB limit.'
+            )
     try:
         with warnings.catch_warnings():
-            # Check dimensions ourselves so normal over-limit uploads receive
-            # an actionable error rather than being described as corrupt.
+            # Check dimensions ourselves so over-limit uploads receive an
+            # actionable error rather than being described as corrupt.
             warnings.simplefilter('ignore', Image.DecompressionBombWarning)
             with Image.open(upload.stream) as image:
                 if image.format not in {'PNG', 'JPEG'}:
                     raise BadRequest('Upload a PNG or JPEG image.')
-                if image.width * image.height > MAX_PIXELS:
-                    raise BadRequest(f'Image resolution {image.width}x{image.height} exceeds 25 megapixels.')
+                source_pixels = image.width * image.height
+                if source_pixels > maximum_pixels:
+                    limit = maximum_pixels // 1_000_000
+                    raise BadRequest(
+                        f'Image resolution {image.width}x{image.height} exceeds the {limit} megapixel processing limit.'
+                    )
                 image.load()
-                return ImageOps.exif_transpose(image).convert('RGBA')
+                normalized = ImageOps.exif_transpose(image).convert('RGBA')
+                if output_pixels and source_pixels > output_pixels:
+                    normalized = normalized.resize(
+                        _scaled_size(*normalized.size, output_pixels),
+                        Image.Resampling.LANCZOS,
+                    )
+                return normalized
     except (Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
-        raise BadRequest('Image resolution exceeds 25 megapixels. Reduce its dimensions and try again.') from error
+        raise BadRequest('Image resolution exceeds the 50 megapixel processing limit.') from error
     except (UnidentifiedImageError, OSError, ValueError) as error:
         raise BadRequest('Image cannot be decoded. Export a new PNG or JPEG and try again.') from error
+
+
+def atomic_photo_save(image, path, maximum_bytes=MAX_PHOTO_UPLOAD_BYTES):
+    """Persist a portrait as a compact JPEG, never exceeding the 5 MB quota.
+
+    Uploaded PNG portraits are flattened against white because the background
+    removal model consumes a normal RGB photo.  A JPEG is considerably smaller
+    than the previous decoded PNG and prevents a small JPEG upload from
+    expanding into a very large permanent file on disk.
+    """
+    path = Path(path)
+    source = image.convert('RGBA')
+    background = Image.new('RGBA', source.size, 'white')
+    background.alpha_composite(source)
+    candidate = background.convert('RGB')
+    temporary = path.with_name(f'.{uuid4().hex}.tmp')
+    try:
+        for _ in range(8):
+            for quality in (88, 80, 72, 64):
+                candidate.save(temporary, 'JPEG', quality=quality, optimize=True, progressive=True)
+                if temporary.stat().st_size <= maximum_bytes:
+                    os.replace(temporary, path)
+                    return {'width': candidate.width, 'height': candidate.height, 'size': path.stat().st_size}
+            candidate = candidate.resize(
+                (max(1, int(candidate.width * 0.85)), max(1, int(candidate.height * 0.85))),
+                Image.Resampling.LANCZOS,
+            )
+        raise BadRequest('Photo could not be compressed below the 5 MB storage limit. Please use a simpler image.')
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def safe_path(folder, filename):

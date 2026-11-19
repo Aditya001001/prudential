@@ -2,12 +2,13 @@ import { localizeMessage } from './messages';
 import { errorMessage } from './api';
 
 test('upload errors distinguish resolution, unreadable content, and file size', () => {
-  const resolution = localizeMessage('Image resolution 4453x8021 exceeds 25 megapixels.');
+  const resolution = localizeMessage('Image resolution 4453x8021 exceeds the 50 megapixel processing limit.');
   expect(resolution).toContain('4,453 × 8,021');
   expect(resolution).toContain('35.7');
-  expect(resolution).toContain('請縮小圖片尺寸');
+  expect(resolution).toContain('5,000 萬像素');
   expect(localizeMessage('Image cannot be decoded. Export a new PNG or JPEG and try again.')).toContain('重新匯出');
-  expect(errorMessage({ response: { status: 413, data: '<html>Too large</html>' } })).toContain('少於 50 MB');
+  expect(localizeMessage('Photo file size 5.23 MB exceeds the 5 MB limit.')).toContain('5.23 MB');
+  expect(errorMessage({ response: { status: 413, data: { error: 'Photo upload exceeds the 5 MB limit.' } } })).toContain('5 MB');
 });
 
 test('localizes rejected imports while preserving row numbers and useful validation details', () => {

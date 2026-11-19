@@ -246,6 +246,8 @@ class Regressions(unittest.TestCase):
             result = web.process_generation_job(response.json['job']['id'])
         self.assertEqual(result['status'], 'completed')
         cert=Certificate.query.one();self.assertEqual(cert.client_code_snapshot,'00001');self.assertTrue(cert.generated_by)
+        self.assertTrue(cert.original_photo_filename.endswith('.jpg'))
+        self.assertLessEqual(cert.original_photo_size, 5 * 1024 * 1024)
         self.assertEqual(list(Path(web.USER_UPLOADS_FOLDER).iterdir()),[])
         with self.client.get('/api/user/download/unique.png') as response:self.assertEqual(response.status_code,200)
         db.session.refresh(cert);self.assertEqual(cert.download_count,1)
