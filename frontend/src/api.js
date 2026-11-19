@@ -26,10 +26,24 @@ api.interceptors.request.use(async config => {
 api.interceptors.response.use(response => {
   if (response.data.csrf_token) { csrfToken = response.data.csrf_token; sessionData = undefined; }
   return response;
-}, error => {
+}, async error => {
   if (error.response?.status === 401 && !error.config?.url?.endsWith('/auth/login')) {
     sessionData = undefined;
     window.dispatchEvent(new Event('prudential-auth-expired'));
+  }
+  // A browser can retain an old CSRF header after a service restart, session
+  // renewal, or a restored mobile tab. Refresh it once and replay the request
+  // rather than failing a selected photo upload unnecessarily.
+  if (error.response?.status === 403 && error.config && !error.config._csrfRetried && !error.config.url?.endsWith('/auth/login')) {
+    error.config._csrfRetried = true;
+    csrfToken = undefined;
+    sessionData = undefined;
+    try {
+      await getSession(true);
+      return api.request(error.config);
+    } catch {
+      // Fall through to the normal localized error below.
+    }
   }
   if (error.response?.status === 403) sessionData = undefined;
   return Promise.reject(error);
