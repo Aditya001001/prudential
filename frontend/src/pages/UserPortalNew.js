@@ -11,6 +11,55 @@ import './UserPortalNew.css';
 const GENERATION_JOB_STORAGE_KEY = 'prudential-generation-job';
 const PHOTO_MAX_BYTES = 5 * 1024 * 1024;
 const PHOTO_MAX_PIXELS = 25_000_000;
+const PHOTO_SOURCE_MAX_BYTES = 20 * 1024 * 1024;
+const PHOTO_SOURCE_MAX_PIXELS = 50_000_000;
+
+const canvasBlob = (canvas, quality) => new Promise((resolve, reject) => {
+  canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Unable to encode photo.')), 'image/jpeg', quality);
+});
+
+const scaledPhotoSize = (width, height, maximumPixels) => {
+  const scale = Math.min(1, Math.sqrt(maximumPixels / (width * height)));
+  let scaledWidth = Math.max(1, Math.floor(width * scale));
+  let scaledHeight = Math.max(1, Math.floor(height * scale));
+  while (scaledWidth * scaledHeight > maximumPixels) scaledHeight -= 1;
+  return { width: scaledWidth, height: scaledHeight };
+};
+
+async function normalizePhotoInBrowser(image, file, width, height) {
+  let { width: targetWidth, height: targetHeight } = scaledPhotoSize(width, height, PHOTO_MAX_PIXELS);
+  // Re-encode only when necessary. This keeps already suitable photos fast
+  // while moving expensive resizing/compression off the server.
+  if (file.size <= PHOTO_MAX_BYTES && targetWidth === width && targetHeight === height) {
+    return { file, width, height, processed: false };
+  }
+
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d', { alpha: false });
+  if (!context) throw new Error('Canvas unavailable');
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, targetWidth, targetHeight);
+    context.drawImage(image, 0, 0, targetWidth, targetHeight);
+    for (const quality of [0.88, 0.8, 0.72, 0.64]) {
+      const blob = await canvasBlob(canvas, quality);
+      if (blob.size <= PHOTO_MAX_BYTES) {
+        return {
+          file: new File([blob], 'portrait.jpg', { type: 'image/jpeg' }),
+          width: targetWidth,
+          height: targetHeight,
+          processed: true,
+        };
+      }
+    }
+    targetWidth = Math.max(1, Math.floor(targetWidth * 0.85));
+    targetHeight = Math.max(1, Math.floor(targetHeight * 0.85));
+  }
+  throw new Error('Photo cannot be compressed to 5 MB.');
+}
 
 function UserPortalNew() {
   const [systemReady, setSystemReady] = useState(null);
@@ -223,8 +272,8 @@ function UserPortalNew() {
       setError('請選擇 PNG 或 JPEG 圖片。');
       return;
     }
-    if (file.size > PHOTO_MAX_BYTES) {
-      setError(`檔案容量為 ${(file.size / 1024 / 1024).toFixed(2)} MB，超過 5 MB 上限。請選擇較小的照片。`);
+    if (file.size > PHOTO_SOURCE_MAX_BYTES) {
+      setError(`檔案容量為 ${(file.size / 1024 / 1024).toFixed(2)} MB，超過此裝置可自動處理的 20 MB 上限。請選擇較小的照片。`);
       return;
     }
     setError(null);
@@ -242,40 +291,54 @@ function UserPortalNew() {
         const width = image.naturalWidth || image.width;
         const height = image.naturalHeight || image.height;
         if (!width || !height) { image.onerror(); return; }
-        pendingPhotoRef.current = null;
-        setReadingPhoto(false);
-        setSelectedFile(file);
-        setPreviewImage(url);
-        const megapixels = (width * height) / 1_000_000;
-        const MIN_WIDTH = 1000;
-        const MIN_HEIGHT = 1500;
-        const IDEAL_WIDTH = 1200;
-        const IDEAL_HEIGHT = 1800;
-        if (width * height > PHOTO_MAX_PIXELS) {
-          const scale = Math.sqrt(PHOTO_MAX_PIXELS / (width * height));
-          const resizedWidth = Math.floor(width * scale);
-          const resizedHeight = Math.floor(height * scale);
-          setResolutionWarning({
-            level: 'warning',
-            message: `圖片尺寸為 ${width.toLocaleString()} × ${height.toLocaleString()} 像素（${megapixels.toFixed(2)} 百萬像素）。系統會自動調整至約 ${resizedWidth.toLocaleString()} × ${resizedHeight.toLocaleString()} 像素，以符合 2,500 萬像素上限並保留海報所需品質。`
-          });
-        } else if (width < MIN_WIDTH || height < MIN_HEIGHT) {
-          setResolutionWarning({
-            level: 'error',
-            message: `解像度偏低：${width} × ${height} 像素（${megapixels.toFixed(2)} 百萬像素）。為獲得最佳效果，請上傳至少 ${MIN_WIDTH} × ${MIN_HEIGHT} 像素（150 萬像素）的照片；否則照片可能顯得模糊。`
-          });
-        } else if (width < IDEAL_WIDTH || height < IDEAL_HEIGHT) {
-          setResolutionWarning({
-            level: 'warning',
-            message: `解像度良好：${width} × ${height} 像素（${megapixels.toFixed(2)} 百萬像素）。為獲得更佳效果，建議上傳 ${IDEAL_WIDTH} × ${IDEAL_HEIGHT} 像素或以上的照片。`
-          });
-        } else {
-          setResolutionWarning({
-            level: 'success',
-            message: `解像度極佳：${width} × ${height} 像素（${megapixels.toFixed(2)} 百萬像素）。照片適合用於製作海報。`
-          });
+        if (width * height > PHOTO_SOURCE_MAX_PIXELS) {
+          pendingPhotoRef.current = null;
+          URL.revokeObjectURL(url);
+          setReadingPhoto(false);
+          setSelectedFile(null);
+          setError(`圖片尺寸為 ${width.toLocaleString()} × ${height.toLocaleString()} 像素，超過此裝置可自動處理的 5,000 萬像素上限。`);
+          return;
         }
-        setStep(3);
+        const acceptNormalizedPhoto = normalized => {
+          if (request !== photoRequestRef.current) return;
+          const previewUrl = normalized.processed ? URL.createObjectURL(normalized.file) : url;
+          if (normalized.processed) URL.revokeObjectURL(url);
+          pendingPhotoRef.current = null;
+          setReadingPhoto(false);
+          setSelectedFile(normalized.file);
+          setPreviewImage(previewUrl);
+          const megapixels = (width * height) / 1_000_000;
+          const MIN_WIDTH = 1000;
+          const MIN_HEIGHT = 1500;
+          const IDEAL_WIDTH = 1200;
+          const IDEAL_HEIGHT = 1800;
+          if (normalized.processed) {
+            const message = `已在此裝置調整照片：${width.toLocaleString()} × ${height.toLocaleString()} 像素（${megapixels.toFixed(2)} 百萬像素）→ ${normalized.width.toLocaleString()} × ${normalized.height.toLocaleString()} 像素；實際上傳 ${(normalized.file.size / 1024 / 1024).toFixed(2)} MB。`;
+            setResolutionWarning({ level: 'success', message });
+          } else if (width < MIN_WIDTH || height < MIN_HEIGHT) {
+            setResolutionWarning({ level: 'error', message: `解像度偏低：${width} × ${height} 像素（${megapixels.toFixed(2)} 百萬像素）。為獲得最佳效果，請上傳至少 ${MIN_WIDTH} × ${MIN_HEIGHT} 像素（150 萬像素）的照片；否則照片可能顯得模糊。` });
+          } else if (width < IDEAL_WIDTH || height < IDEAL_HEIGHT) {
+            setResolutionWarning({ level: 'warning', message: `解像度良好：${width} × ${height} 像素（${megapixels.toFixed(2)} 百萬像素）。為獲得更佳效果，建議上傳 ${IDEAL_WIDTH} × ${IDEAL_HEIGHT} 像素或以上的照片。` });
+          } else {
+            setResolutionWarning({ level: 'success', message: `解像度極佳：${width} × ${height} 像素（${megapixels.toFixed(2)} 百萬像素）。照片適合用於製作海報。` });
+          }
+          setStep(3);
+        };
+        const rejectNormalization = () => {
+          if (request !== photoRequestRef.current) return;
+          pendingPhotoRef.current = null;
+          URL.revokeObjectURL(url);
+          setReadingPhoto(false);
+          setSelectedFile(null);
+          setError('無法在此裝置調整照片至 5 MB，請選擇較小的照片後重試。');
+        };
+        const target = scaledPhotoSize(width, height, PHOTO_MAX_PIXELS);
+        const needsNormalization = file.size > PHOTO_MAX_BYTES || target.width !== width || target.height !== height;
+        if (needsNormalization) {
+          normalizePhotoInBrowser(image, file, width, height).then(acceptNormalizedPhoto).catch(rejectNormalization);
+        } else {
+          acceptNormalizedPhoto({ file, width, height, processed: false });
+        }
       };
       image.onerror = () => {
         if (request !== photoRequestRef.current) return;
@@ -649,13 +712,13 @@ function UserPortalNew() {
                     <p id="photo-upload-guidance">請上載清晰半身職業照，面部清楚可見。</p>
                     <ul id="photo-upload-requirements">
                       <li><strong>檔案格式：</strong> JPG／JPEG 或 PNG</li>
-                      <li><strong>檔案大小：</strong> 不超過 5 MB</li>
+                      <li><strong>檔案大小：</strong> 此裝置會自動壓縮至不超過 5 MB</li>
                       <li><strong>最低建議解像度：</strong> 1,000 × 1,500 像素</li>
-                      <li><strong>解像度：</strong> 超過 2,500 萬像素時會自動縮小</li>
+                      <li><strong>解像度：</strong> 此裝置會自動縮小至不超過 2,500 萬像素</li>
                     </ul>
                   </div>
                 </div>
-                {readingPhoto && <p className="photo-read-status" role="status">正在讀取照片…</p>}
+                {readingPhoto && <p className="photo-read-status" role="status">正在於此裝置調整照片…</p>}
             </div>
           </div>
 
