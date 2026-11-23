@@ -503,8 +503,8 @@ function UserPortalNew() {
   if (!systemReady) {
     return (
       <div className="portal-wrapper">
-      {error && <div className="request-error" role="alert">{error}</div>}
         <div className="step-card">
+          {error && <div className="request-error request-error-inline" role="alert">{error}</div>}
           <div className="system-error">
             <h2>系統尚未準備就緒</h2>
             <p>海報產生器暫時無法使用。</p>
@@ -518,7 +518,6 @@ function UserPortalNew() {
 
   return (
     <div className="portal-wrapper">
-      {error && <div className="request-error" role="alert">{error}</div>}
       {uploading && <Loader job={generationJob} />}
       <canvas ref={canvasRef} style={{ display: 'none' }} />
 
@@ -528,6 +527,7 @@ function UserPortalNew() {
           <div className="card-header">
             <img src={`${process.env.PUBLIC_URL}/PRU_logo_black.png`} alt="保誠" className="logo" />
           </div>
+          {error && <div className="request-error request-error-inline" role="alert">{error}</div>}
 
           <h1 className="card-title">MDRT 海報生成平台</h1>
 
@@ -592,6 +592,7 @@ function UserPortalNew() {
           <div className="card-header">
             <img src={`${process.env.PUBLIC_URL}/PRU_logo_black.png`} alt="保誠" className="logo" />
           </div>
+          {error && <div className="request-error request-error-inline" role="alert">{error}</div>}
 
           <h1 className="card-title">MDRT 海報生成平台</h1>
 
@@ -671,6 +672,7 @@ function UserPortalNew() {
           <div className="card-header">
             <img src={`${process.env.PUBLIC_URL}/PRU_logo_black.png`} alt="保誠" className="logo" />
           </div>
+          {error && <div className="request-error request-error-inline" role="alert">{error}</div>}
 
           <h1 className="card-title">MDRT 海報生成平台</h1>
 
@@ -723,6 +725,7 @@ function UserPortalNew() {
           <div className="card-header">
             <img src={`${process.env.PUBLIC_URL}/PRU_logo_black.png`} alt="保誠" className="logo" />
           </div>
+          {error && <div className="request-error request-error-inline" role="alert">{error}</div>}
 
           <h2 className="success-title">
             <div className="success-icon">

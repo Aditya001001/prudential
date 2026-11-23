@@ -1056,7 +1056,7 @@
 
 /* Phone forms stay within the viewport, including errors and long client codes. */
 .portal-wrapper { min-height: 100dvh; flex-direction: column; gap: 16px; }
-.portal-wrapper > .request-error { width: min(100%, 480px); margin: 0; flex-shrink: 0; }
+.request-error-inline { margin: 0 0 20px; text-align: center; }
 .step-card { min-width: 0; }
 .form-header-row { gap: 12px; flex-wrap: wrap; }
 .form-header-row .form-hint { min-width: 0; }
