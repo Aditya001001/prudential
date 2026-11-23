@@ -91,16 +91,32 @@ def _decode_image(upload, *, maximum_pixels, output_pixels=None, maximum_bytes=N
         raise BadRequest('Image cannot be decoded. Export a new PNG or JPEG and try again.') from error
 
 
-def atomic_photo_save(image, path, maximum_bytes=MAX_PHOTO_UPLOAD_BYTES):
+def atomic_photo_save(image, path, maximum_bytes=MAX_PHOTO_UPLOAD_BYTES, preserve_alpha=False):
     """Persist a portrait as a compact JPEG, never exceeding the 5 MB quota.
 
-    Uploaded PNG portraits are flattened against white because the background
-    removal model consumes a normal RGB photo.  A JPEG is considerably smaller
-    than the previous decoded PNG and prevents a small JPEG upload from
-    expanding into a very large permanent file on disk.
+    Uploaded PNG portraits are normally flattened against white because the
+    server background-removal model consumes a normal RGB photo. Browser-cut
+    portraits retain their alpha channel and are saved as PNG so the worker can
+    composite them directly without running the model again.
     """
     path = Path(path)
     source = image.convert('RGBA')
+    if preserve_alpha:
+        candidate = source
+        temporary = path.with_name(f'.{uuid4().hex}.tmp')
+        try:
+            for _ in range(8):
+                candidate.save(temporary, 'PNG', optimize=True)
+                if temporary.stat().st_size <= maximum_bytes:
+                    os.replace(temporary, path)
+                    return {'width': candidate.width, 'height': candidate.height, 'size': path.stat().st_size}
+                candidate = candidate.resize(
+                    (max(1, int(candidate.width * 0.85)), max(1, int(candidate.height * 0.85))),
+                    Image.Resampling.LANCZOS,
+                )
+            raise BadRequest('Cut-out photo could not be compressed below the 5 MB storage limit. Please use a simpler image.')
+        finally:
+            temporary.unlink(missing_ok=True)
     background = Image.new('RGBA', source.size, 'white')
     background.alpha_composite(source)
     candidate = background.convert('RGB')

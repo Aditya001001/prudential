@@ -786,9 +786,17 @@ def user_upload_photo():
         image = validated_photo(upload)
         if image.width < 100 or image.height < 100:
             abort(400, description='Photo must be at least 100 pixels wide and high.')
+        # A browser-generated cut-out is only trusted as an optimisation when
+        # it really contains transparent pixels. Other uploads retain the
+        # established server-side removal fallback.
+        client_cutout = (
+            request.form.get('client_background_removed') == '1'
+            and image.getchannel('A').getextrema()[0] < 255
+        )
         identifier = uuid4().hex
-        photo_path = safe_path(USER_PHOTOS_FOLDER, f'{identifier}_original.jpg')
-        atomic_photo_save(image, photo_path)
+        suffix = 'cutout.png' if client_cutout else 'original.jpg'
+        photo_path = safe_path(USER_PHOTOS_FOLDER, f'{identifier}_{suffix}')
+        atomic_photo_save(image, photo_path, preserve_alpha=client_cutout)
         job = GenerationJob(
             id=identifier, owner=owner, status='queued', agent_id=agent.id,
             client_code_snapshot=agent.client_code, agent_name_snapshot=agent.agent_name,
@@ -963,11 +971,24 @@ def generate_certificate_for_agent(agent, photo_path):
     print(f"[TIMING] Background loaded: {time.time() - bg_load_start:.2f}s")
     print(f"[INFO] Background original size: {bg_width_original}x{bg_height_original}")
 
-    # Remove background from agent photo FIRST to check its resolution
-    rembg_start = time.time()
-    print(f"[TIMING] Starting background removal...")
-    agent_img = remove_background(photo_path)
-    print(f"[TIMING] Background removal completed: {time.time() - rembg_start:.2f}s")
+    # Browser-cut portraits retain their transparent alpha channel. This is
+    # the normal fast path; rembg remains a compatibility fallback for older
+    # browsers or a failed local model run.
+    with Image.open(photo_path) as photo_source:
+        supplied_cutout = (
+            photo_source.mode in ('RGBA', 'LA')
+            and photo_source.getchannel('A').getextrema()[0] < 255
+        )
+        if supplied_cutout:
+            agent_img = ImageOps.exif_transpose(photo_source).convert('RGBA')
+    if supplied_cutout:
+        metadata['model'] = 'browser-selfie-segmentation'
+        print('[TIMING] Browser background removal supplied; skipping server model.')
+    else:
+        rembg_start = time.time()
+        print(f"[TIMING] Starting background removal...")
+        agent_img = remove_background(photo_path)
+        print(f"[TIMING] Background removal completed: {time.time() - rembg_start:.2f}s")
 
     # Trim empty transparent margin around the subject before scaling.
     # Some photos (e.g. wide webcam/laptop shots) have the subject occupying

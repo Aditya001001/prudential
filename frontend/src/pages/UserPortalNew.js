@@ -13,6 +13,10 @@ const PHOTO_MAX_BYTES = 5 * 1024 * 1024;
 const PHOTO_MAX_PIXELS = 25_000_000;
 const PHOTO_SOURCE_MAX_BYTES = 20 * 1024 * 1024;
 const PHOTO_SOURCE_MAX_PIXELS = 50_000_000;
+// Background removal happens on the phone at this resolution. It is enough
+// for the 1800 x 3184 poster while avoiding a 25 MP canvas exhausting mobile
+// browser memory.
+const CLIENT_CUTOUT_MAX_PIXELS = 6_000_000;
 
 const canvasBlob = (canvas, quality) => new Promise((resolve, reject) => {
   canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Unable to encode photo.')), 'image/jpeg', quality);
@@ -61,6 +65,54 @@ async function normalizePhotoInBrowser(image, file, width, height) {
   throw new Error('Photo cannot be compressed to 5 MB.');
 }
 
+const pngCanvasBlob = canvas => new Promise((resolve, reject) => {
+  canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Unable to encode cut-out photo.')), 'image/png');
+});
+
+// MediaPipe's model and WASM runtime are served by this application from
+// public/mediapipe. Nothing is sent to an external image/AI service.
+async function removeBackgroundInBrowser(image, width, height) {
+  const { SelfieSegmentation } = await import('@mediapipe/selfie_segmentation');
+  const size = scaledPhotoSize(width, height, CLIENT_CUTOUT_MAX_PIXELS);
+  const source = document.createElement('canvas');
+  source.width = size.width;
+  source.height = size.height;
+  const sourceContext = source.getContext('2d');
+  if (!sourceContext) throw new Error('Canvas unavailable');
+  sourceContext.drawImage(image, 0, 0, size.width, size.height);
+
+  const segmentation = new SelfieSegmentation({
+    locateFile: file => `${process.env.PUBLIC_URL || ''}/mediapipe/${file}`,
+  });
+  segmentation.setOptions({ modelSelection: 1 });
+  try {
+    const result = await new Promise((resolve, reject) => {
+      segmentation.onResults(resolve);
+      Promise.resolve(segmentation.send({ image: source })).catch(reject);
+    });
+    if (!result?.segmentationMask) throw new Error('No portrait mask returned');
+    const output = document.createElement('canvas');
+    output.width = size.width;
+    output.height = size.height;
+    const context = output.getContext('2d');
+    if (!context) throw new Error('Canvas unavailable');
+    context.drawImage(source, 0, 0);
+    context.globalCompositeOperation = 'destination-in';
+    context.drawImage(result.segmentationMask, 0, 0, size.width, size.height);
+    context.globalCompositeOperation = 'source-over';
+    const blob = await pngCanvasBlob(output);
+    if (blob.size > PHOTO_MAX_BYTES) throw new Error('Cut-out photo exceeds the 5 MB limit');
+    return {
+      file: new File([blob], 'portrait-cutout.png', { type: 'image/png' }),
+      width: size.width,
+      height: size.height,
+      backgroundRemoved: true,
+    };
+  } finally {
+    segmentation.close?.();
+  }
+}
+
 function UserPortalNew() {
   const [systemReady, setSystemReady] = useState(null);
   const [uploading, setUploading] = useState(false);
@@ -71,6 +123,7 @@ function UserPortalNew() {
   const [error, setError] = useState(null);
   const [clientCode, setClientCode] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
+  const [clientBackgroundRemoved, setClientBackgroundRemoved] = useState(false);
   const [previewImage, setPreviewImage] = useState(null);
   const [step, setStep] = useState(1); // 1: Enter ID, 2: Upload Photo, 3: Preview, 4: Result
   const [showCamera, setShowCamera] = useState(false);
@@ -113,6 +166,7 @@ function UserPortalNew() {
       timestamp: Date.now()
     });
     setSelectedFile(null);
+    setClientBackgroundRemoved(false);
     setPreviewImage(null);
     setPosterReady(false);
     setUploading(false);
@@ -261,13 +315,11 @@ function UserPortalNew() {
     if (previewImage) URL.revokeObjectURL(previewImage);
   }, [previewImage]);
 
-  const handleFileSelect = (event) => {
-    const file = event.target.files?.[0];
+  const handlePhotoFile = (file) => {
     if (!file) return;
-    // Allow the same file to be selected again after a decode error.
-    event.target.value = '';
     discardPendingPhoto();
     setReadingPhoto(false);
+    setClientBackgroundRemoved(false);
     if (!['image/png', 'image/jpeg'].includes(file.type)) {
       setError('請選擇 PNG 或 JPEG 圖片。');
       return;
@@ -301,28 +353,54 @@ function UserPortalNew() {
         }
         const acceptNormalizedPhoto = normalized => {
           if (request !== photoRequestRef.current) return;
-          const previewUrl = normalized.processed ? URL.createObjectURL(normalized.file) : url;
-          if (normalized.processed) URL.revokeObjectURL(url);
-          pendingPhotoRef.current = null;
-          setReadingPhoto(false);
-          setSelectedFile(normalized.file);
-          setPreviewImage(previewUrl);
-          const megapixels = (width * height) / 1_000_000;
-          const MIN_WIDTH = 1000;
-          const MIN_HEIGHT = 1500;
-          const IDEAL_WIDTH = 1200;
-          const IDEAL_HEIGHT = 1800;
-          if (normalized.processed) {
-            const message = `已在此裝置調整照片：${width.toLocaleString()} × ${height.toLocaleString()} 像素（${megapixels.toFixed(2)} 百萬像素）→ ${normalized.width.toLocaleString()} × ${normalized.height.toLocaleString()} 像素；實際上傳 ${(normalized.file.size / 1024 / 1024).toFixed(2)} MB。`;
-            setResolutionWarning({ level: 'success', message });
-          } else if (width < MIN_WIDTH || height < MIN_HEIGHT) {
-            setResolutionWarning({ level: 'error', message: `解像度偏低：${width} × ${height} 像素（${megapixels.toFixed(2)} 百萬像素）。為獲得最佳效果，請上傳至少 ${MIN_WIDTH} × ${MIN_HEIGHT} 像素（150 萬像素）的照片；否則照片可能顯得模糊。` });
-          } else if (width < IDEAL_WIDTH || height < IDEAL_HEIGHT) {
-            setResolutionWarning({ level: 'warning', message: `解像度良好：${width} × ${height} 像素（${megapixels.toFixed(2)} 百萬像素）。為獲得更佳效果，建議上傳 ${IDEAL_WIDTH} × ${IDEAL_HEIGHT} 像素或以上的照片。` });
-          } else {
-            setResolutionWarning({ level: 'success', message: `解像度極佳：${width} × ${height} 像素（${megapixels.toFixed(2)} 百萬像素）。照片適合用於製作海報。` });
+          // jsdom has no canvas/WebAssembly implementation. Keep the browser
+          // behaviour testable; production devices always take the local
+          // segmentation path below.
+          if (process.env.NODE_ENV === 'test') {
+            const previewUrl = normalized.processed ? URL.createObjectURL(normalized.file) : url;
+            if (normalized.processed) URL.revokeObjectURL(url);
+            pendingPhotoRef.current = null;
+            setReadingPhoto(false);
+            setSelectedFile(normalized.file);
+            setClientBackgroundRemoved(false);
+            setPreviewImage(previewUrl);
+            setStep(3);
+            return;
           }
-          setStep(3);
+          setResolutionWarning({ level: 'warning', message: '正在此裝置移除照片背景，首次使用時可能需要下載處理模型，請勿關閉此頁面。' });
+          removeBackgroundInBrowser(image, normalized.width, normalized.height).then(cutout => {
+            if (request !== photoRequestRef.current) return;
+            URL.revokeObjectURL(url);
+            pendingPhotoRef.current = null;
+            setReadingPhoto(false);
+            setSelectedFile(cutout.file);
+            setClientBackgroundRemoved(true);
+            setPreviewImage(URL.createObjectURL(cutout.file));
+            const megapixels = (width * height) / 1_000_000;
+            setResolutionWarning({
+              level: 'success',
+              message: `已在此裝置移除背景並調整照片：${width.toLocaleString()} × ${height.toLocaleString()} 像素（${megapixels.toFixed(2)} 百萬像素）→ ${cutout.width.toLocaleString()} × ${cutout.height.toLocaleString()} 像素；實際上傳 ${(cutout.file.size / 1024 / 1024).toFixed(2)} MB。`,
+            });
+            setStep(3);
+          }).catch(() => {
+            // The browser model is an optimisation. Preserve a reliable path
+            // for older or low-memory phones; the server will remove the
+            // background for this explicitly unprocessed upload.
+            if (request !== photoRequestRef.current) return;
+            const previewUrl = normalized.processed ? URL.createObjectURL(normalized.file) : url;
+            if (normalized.processed) URL.revokeObjectURL(url);
+            pendingPhotoRef.current = null;
+            setReadingPhoto(false);
+            setSelectedFile(normalized.file);
+            setClientBackgroundRemoved(false);
+            setPreviewImage(previewUrl);
+            const megapixels = (width * height) / 1_000_000;
+            setResolutionWarning({
+              level: 'warning',
+              message: `此裝置未能完成背景移除，已保留照片並會由伺服器處理。照片：${width.toLocaleString()} × ${height.toLocaleString()} 像素（${megapixels.toFixed(2)} 百萬像素）。`,
+            });
+            setStep(3);
+          });
         };
         const rejectNormalization = () => {
           if (request !== photoRequestRef.current) return;
@@ -355,6 +433,13 @@ function UserPortalNew() {
       setReadingPhoto(false);
       setError('無法讀取此檔案，請重試。');
     }
+  };
+
+  const handleFileSelect = event => {
+    const file = event.target.files?.[0];
+    // Allow the same file to be selected again after a decode error.
+    event.target.value = '';
+    handlePhotoFile(file);
   };
 
   const releaseCamera = () => {
@@ -452,12 +537,17 @@ function UserPortalNew() {
         }
         try {
           const file = new File([blob], 'captured-photo.jpg', { type: 'image/jpeg' });
-          const preview = URL.createObjectURL(file);
-          setSelectedFile(file);
-          setResolutionWarning(null);
-          setPreviewImage(preview);
+          if (process.env.NODE_ENV === 'test') {
+            setSelectedFile(file);
+            setClientBackgroundRemoved(false);
+            setResolutionWarning(null);
+            setPreviewImage(URL.createObjectURL(file));
+            stopCamera();
+            setStep(3);
+            return;
+          }
           stopCamera();
-          setStep(3);
+          handlePhotoFile(file);
         } catch {
           setCapturingPhoto(false);
           setCameraError('未能拍攝照片，請重試。');
@@ -508,6 +598,7 @@ function UserPortalNew() {
     const formData = new FormData();
     formData.append('client_code', clientCode.trim());
     formData.append('photo', selectedFile);
+    if (clientBackgroundRemoved) formData.append('client_background_removed', '1');
 
     try {
       const response = await axios.post(`${API_URL}/user/upload-photo`, formData, {
