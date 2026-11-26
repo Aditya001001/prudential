@@ -27,12 +27,12 @@ class MigrationTests(unittest.TestCase):
         db.drop_all();self.context.pop()
 
     def test_migration_preserves_orphans_and_recovers_client_code(self):
-        self.assertEqual(upgrade(),2)
+        self.assertEqual(upgrade(),3)
         cert=db.session.get(Certificate,1)
         self.assertIsNone(cert.agent_id);self.assertEqual(cert.client_code_snapshot,'00042')
         self.assertEqual(cert.agent_name_snapshot,'Historical Agent');self.assertEqual(cert.badges_snapshot,'')
         self.assertIsNone(cert.render_metadata)
-        self.assertEqual(upgrade(),2);self.assertEqual(Certificate.query.count(),1)
+        self.assertEqual(upgrade(),3);self.assertEqual(Certificate.query.count(),1)
         self.assertEqual(GenerationJob.query.count(),0)
         with db.engine.connect() as connection:
             self.assertEqual(connection.exec_driver_sql('PRAGMA foreign_key_check').all(),[])

@@ -89,6 +89,105 @@ class Regressions(unittest.TestCase):
         db.session.commit()
         return cert
 
+    def place_asset(self, kind, name, color):
+        folder = {'background': 'backgrounds', 'badge': 'badges', 'nametag': 'nametags', 'layer': 'layers'}[kind]
+        path = Path(web.ADMIN_ASSETS_FOLDER) / folder / f'{name}.png'
+        size = (web.REFERENCE_WIDTH, web.REFERENCE_HEIGHT) if kind in ('background', 'layer') else (300, 150)
+        Image.new('RGBA', size, color).save(path)
+        return path
+
+    def test_validate_composed_poster_accepts_matching_render(self):
+        self.place_asset('background', 'MDRT', (10, 20, 30, 255))
+        reference, _ = web.build_validation_reference('MDRT', [])
+        poster = reference.resize((web.REFERENCE_WIDTH, web.REFERENCE_HEIGHT)).convert('RGBA')
+        self.assertTrue(web.validate_composed_poster(poster, 'MDRT', []))
+
+    def test_validate_composed_poster_rejects_wrong_tier_artwork(self):
+        self.place_asset('background', 'MDRT', (10, 20, 30, 255))
+        self.place_asset('background', 'COT', (240, 230, 220, 255))
+        tampered_reference, _ = web.build_validation_reference('COT', [])
+        tampered = tampered_reference.resize((web.REFERENCE_WIDTH, web.REFERENCE_HEIGHT)).convert('RGBA')
+        self.assertFalse(web.validate_composed_poster(tampered, 'MDRT', []))
+
+    def test_validate_composed_poster_rejects_fabricated_badge(self):
+        self.place_asset('background', 'MDRT', (10, 20, 30, 255))
+        self.place_asset('badge', 'LM', (255, 215, 0, 255))
+        with_badge_reference, _ = web.build_validation_reference('MDRT', ['LM'])
+        with_badge = with_badge_reference.resize((web.REFERENCE_WIDTH, web.REFERENCE_HEIGHT)).convert('RGBA')
+        self.assertFalse(web.validate_composed_poster(with_badge, 'MDRT', []))
+
+    def test_validate_composed_poster_ignores_portrait_and_name_text_differences(self):
+        self.place_asset('background', 'MDRT', (10, 20, 30, 255))
+        reference, _ = web.build_validation_reference('MDRT', [])
+        poster = reference.resize((web.REFERENCE_WIDTH, web.REFERENCE_HEIGHT)).convert('RGBA')
+        draw = web.ImageDraw.Draw(poster)
+        photo_ratios = web.POSITION_RATIOS['agent_photo']
+        draw.rectangle([0, int(web.REFERENCE_HEIGHT * (1 - photo_ratios['height_ratio'])),
+                       web.REFERENCE_WIDTH, web.REFERENCE_HEIGHT], fill=(0, 255, 0, 255))
+        self.assertTrue(web.validate_composed_poster(poster, 'MDRT', []))
+
+    def test_validate_composed_poster_handles_missing_assets_gracefully(self):
+        poster = Image.new('RGBA', (web.REFERENCE_WIDTH, web.REFERENCE_HEIGHT), (0, 0, 0, 255))
+        self.assertTrue(web.validate_composed_poster(poster, 'MDRT', []))
+
+    def test_valid_composed_poster_is_used_directly_and_is_not_editable(self):
+        self.place_asset('background', 'MDRT', (10, 20, 30, 255))
+        reference, _ = web.build_validation_reference('MDRT', [])
+        poster_bytes = io.BytesIO()
+        reference.resize((web.REFERENCE_WIDTH, web.REFERENCE_HEIGHT)).convert('RGBA').save(poster_bytes, 'PNG')
+        poster_bytes.seek(0)
+        token = self.bootstrap()
+        with patch.object(web, 'enqueue_generation', return_value=SimpleNamespace(id='rq-composed')):
+            response = self.client.post('/api/user/upload-photo', data={
+                'client_code': '00001', 'photo': (png(), 'portrait.png'),
+                'composed_poster': (poster_bytes, 'composed-poster.png'),
+            }, headers={'X-CSRF-Token': token})
+        self.assertEqual(response.status_code, 202)
+        job_id = response.json['job']['id']
+        self.assertIsNotNone(db.session.get(GenerationJob, job_id).composed_poster_filename)
+        result = web.process_generation_job(job_id)
+        self.assertEqual(result['status'], 'completed')
+        certificate = Certificate.query.one()
+        self.assertEqual(certificate.render_metadata.get('client_composed'), True)
+        self.assertNotIn('editor', certificate.render_metadata)
+        status = self.client.get(f'/api/user/generation-jobs/{job_id}')
+        self.assertFalse(status.json['job']['certificate']['editable'])
+        # No per-layer editor state exists, so repositioning must be refused
+        # rather than silently doing nothing or crashing.
+        adjust = self.client.post(f'/api/user/certificates/{certificate.id}/adjust',
+                                  json={'revision': 0, 'transform': {'scale': 1, 'offset_x': 0, 'offset_y': 0}},
+                                  headers={'X-CSRF-Token': token})
+        self.assertEqual(adjust.status_code, 409)
+
+    def test_tampered_composed_poster_falls_back_to_server_render_and_is_editable(self):
+        self.place_asset('background', 'MDRT', (10, 20, 30, 255))
+        self.place_asset('background', 'COT', (240, 230, 220, 255))
+        tampered_reference, _ = web.build_validation_reference('COT', [])
+        poster_bytes = io.BytesIO()
+        tampered_reference.resize((web.REFERENCE_WIDTH, web.REFERENCE_HEIGHT)).convert('RGBA').save(poster_bytes, 'PNG')
+        poster_bytes.seek(0)
+        token = self.bootstrap()
+
+        def generate(agent, path):
+            output = Path(web.USER_OUTPUTS_FOLDER) / 'server-rendered.png'
+            output.write_bytes(png().getvalue())
+            return output.name, str(output), {'renderer_version': 6, 'editor': {'version': 1}}
+
+        with patch.object(web, 'enqueue_generation', return_value=SimpleNamespace(id='rq-tampered')):
+            response = self.client.post('/api/user/upload-photo', data={
+                'client_code': '00001', 'photo': (png(), 'portrait.png'),
+                'composed_poster': (poster_bytes, 'composed-poster.png'),
+            }, headers={'X-CSRF-Token': token})
+        self.assertEqual(response.status_code, 202)
+        job_id = response.json['job']['id']
+        with self.assertLogs(web.app.logger, level='WARNING'), patch.object(web, 'generate_certificate_for_agent', side_effect=generate):
+            result = web.process_generation_job(job_id)
+        self.assertEqual(result['status'], 'completed')
+        certificate = Certificate.query.one()
+        self.assertNotIn('client_composed', certificate.render_metadata)
+        status = self.client.get(f'/api/user/generation-jobs/{job_id}')
+        self.assertTrue(status.json['job']['certificate']['editable'])
+
     def test_admin_endpoints_require_authentication(self):
         for method, url in [('get','/api/admin/status'),('get','/api/agents'),('get','/api/certificates/history'),('get','/api/admin/csv-history'),('get','/api/certificates/photo/anything.png'),('delete','/api/admin/delete-csv'),('put',f'/api/agents/{self.agent.id}'),('delete','/api/certificates/1')]:
             self.assertEqual(getattr(self.client, method)(url).status_code, 401, url)
@@ -344,6 +443,36 @@ class Regressions(unittest.TestCase):
         with self.assertRaises(Exception):safe_path(web.USER_OUTPUTS_FOLDER,'../cert.key')
         self.assertEqual(self.client.get('/api/not-a-route').status_code,404)
         self.assertEqual(self.client.get('/api/not-a-route').content_type,'application/json')
+
+    def test_render_config_exposes_layout_and_asset_urls_for_client_compositing(self):
+        (Path(web.ADMIN_ASSETS_FOLDER)/'backgrounds/MDRT.png').write_bytes(png((10,10)).getvalue())
+        (Path(web.ADMIN_ASSETS_FOLDER)/'badges/LM.png').write_bytes(png((10,10)).getvalue())
+        update_agent(self.agent.id, life_member=True)
+        response = self.client.get('/api/user/render-config/00001')
+        self.assertEqual(response.status_code, 200)
+        body = response.json
+        self.assertEqual(body['agent'], {'name': 'Example Agent', 'tier': 'MDRT', 'badges': ['LM']})
+        self.assertEqual(body['output_size'], [web.REFERENCE_WIDTH, web.REFERENCE_HEIGHT])
+        self.assertEqual(body['layout'], web.POSITION_RATIOS)
+        self.assertEqual(body['assets']['background'], 'user/assets/background/MDRT.png')
+        self.assertEqual(body['assets']['badges'], {'LM': 'user/assets/badge/LM.png'})
+        # No nametag asset was uploaded for MDRT, so the URL is omitted.
+        self.assertIsNone(body['assets']['nametag'])
+        self.assertEqual(body['font'], {'url': '/fonts/AvenirBlack.ttf', 'family': 'Avenir Black'})
+
+    def test_render_config_unknown_client_code_returns_404(self):
+        response = self.client.get('/api/user/render-config/does-not-exist')
+        self.assertEqual(response.status_code, 404)
+
+    def test_user_asset_serves_known_assets_and_rejects_unknown_or_path_tricks(self):
+        (Path(web.ADMIN_ASSETS_FOLDER)/'backgrounds/MDRT.png').write_bytes(png((10,10)).getvalue())
+        ok = self.client.get('/api/user/assets/background/MDRT.png')
+        self.assertEqual(ok.status_code, 200)
+        self.assertEqual(ok.mimetype, 'image/png')
+        self.assertEqual(self.client.get('/api/user/assets/background/UNKNOWN.png').status_code, 404)
+        self.assertEqual(self.client.get('/api/user/assets/badge/MDRT.png').status_code, 404)
+        self.assertEqual(self.client.get('/api/user/assets/background/..%2f..%2fetc%2fpasswd').status_code, 404)
+        self.assertEqual(self.client.get('/api/user/assets/notakind/MDRT.png').status_code, 404)
 
     def test_quarantine_preserves_referenced_and_recent_files(self):
         import time

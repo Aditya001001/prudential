@@ -69,10 +69,108 @@ const pngCanvasBlob = canvas => new Promise((resolve, reject) => {
   canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('Unable to encode cut-out photo.')), 'image/png');
 });
 
-// MediaPipe's model and WASM runtime are served by this application from
-// public/mediapipe. Nothing is sent to an external image/AI service.
+// Instant Alpha Mask Cleanup & Color Decontamination (De-Fringing).
+// Runs automatically on every cut-out (no extra user-facing step, ~5ms of
+// local canvas work) to remove leftover faint background haze and background
+// color bleed on hair/edges left by the segmentation model.
+async function refineAlphaEdges(canvas, options = {}) {
+  const {
+    lowCutoff = 40, // Push faint alpha <= 40 to 0 (eliminates background haze)
+    highCutoff = 220, // Push near-opaque alpha >= 220 to 255
+    erosionPx = 1, // Shrink mask inward by 1px to shave outer background bleed
+    featherPx = 0.5, // Subtle anti-aliased edge softening
+    defringe = true, // Replace edge RGB with nearest opaque person pixel RGB
+  } = options;
+
+  const w = canvas.width;
+  const h = canvas.height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) throw new Error('Canvas unavailable');
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const data = imgData.data;
+
+  // 1. Alpha soft-step contrast curve.
+  const alphaBuf = new Uint8ClampedArray(w * h);
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    const a = data[i + 3];
+    if (a <= lowCutoff) alphaBuf[p] = 0;
+    else if (a >= highCutoff) alphaBuf[p] = 255;
+    else alphaBuf[p] = Math.round(((a - lowCutoff) / (highCutoff - lowCutoff)) * 255);
+  }
+
+  // 2. Morphological erosion (3x3 min filter) to shave outer background fringe.
+  let currentAlpha = alphaBuf;
+  const passes = Math.floor(erosionPx);
+  for (let pass = 0; pass < passes; pass++) {
+    const next = new Uint8ClampedArray(w * h);
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        let minVal = 255;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const v = currentAlpha[(y + dy) * w + (x + dx)];
+            if (v < minVal) minVal = v;
+          }
+        }
+        next[y * w + x] = minVal;
+      }
+    }
+    currentAlpha = next;
+  }
+
+  // 3. Color decontamination: replace RGB of semi-transparent edge pixels with
+  //    nearest solid foreground pixel RGB so old background color never glows.
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const p = y * w + x;
+      const idx = p * 4;
+      const a = currentAlpha[p];
+      data[idx + 3] = a;
+
+      if (defringe && a > 0 && a < 245) {
+        let bestAlpha = a;
+        let bestIdx = idx;
+        for (let dy = -3; dy <= 3; dy++) {
+          const ny = y + dy;
+          if (ny < 0 || ny >= h) continue;
+          for (let dx = -3; dx <= 3; dx++) {
+            const nx = x + dx;
+            if (nx < 0 || nx >= w) continue;
+            const np = ny * w + nx;
+            if (currentAlpha[np] > bestAlpha) {
+              bestAlpha = currentAlpha[np];
+              bestIdx = np * 4;
+            }
+          }
+        }
+        if (bestIdx !== idx) {
+          data[idx] = data[bestIdx];
+          data[idx + 1] = data[bestIdx + 1];
+          data[idx + 2] = data[bestIdx + 2];
+        }
+      }
+    }
+  }
+
+  ctx.putImageData(imgData, 0, 0);
+
+  if (featherPx > 0) {
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width = w;
+    outCanvas.height = h;
+    const outCtx = outCanvas.getContext('2d');
+    outCtx.filter = `blur(${featherPx}px)`;
+    outCtx.drawImage(canvas, 0, 0);
+    return outCanvas;
+  }
+  return canvas;
+}
+
+// The ISNet model (balanced "fp16" variant) and the onnxruntime-web/WASM
+// runtime it depends on are served by this application from public/bgremoval.
+// Nothing is sent to an external image/AI service.
 async function removeBackgroundInBrowser(image, width, height) {
-  const { SelfieSegmentation } = await import('@mediapipe/selfie_segmentation');
+  const { removeBackground } = await import('@imgly/background-removal');
   const size = scaledPhotoSize(width, height, CLIENT_CUTOUT_MAX_PIXELS);
   const source = document.createElement('canvas');
   source.width = size.width;
@@ -81,35 +179,56 @@ async function removeBackgroundInBrowser(image, width, height) {
   if (!sourceContext) throw new Error('Canvas unavailable');
   sourceContext.drawImage(image, 0, 0, size.width, size.height);
 
-  const segmentation = new SelfieSegmentation({
-    locateFile: file => `${process.env.PUBLIC_URL || ''}/mediapipe/${file}`,
+  const sourceBlob = await pngCanvasBlob(source);
+  const cutoutBlob = await removeBackground(sourceBlob, {
+    publicPath: `${process.env.PUBLIC_URL || ''}/bgremoval/`,
+    model: 'isnet_fp16',
+    output: { format: 'image/png', quality: 1 },
   });
-  segmentation.setOptions({ modelSelection: 1 });
+
+  const bitmap = await createImageBitmap(cutoutBlob);
+  const output = document.createElement('canvas');
+  output.width = bitmap.width;
+  output.height = bitmap.height;
+  const outputContext = output.getContext('2d');
+  if (!outputContext) throw new Error('Canvas unavailable');
+  outputContext.drawImage(bitmap, 0, 0);
+  bitmap.close?.();
+
+  const refined = await refineAlphaEdges(output);
+  const blob = await pngCanvasBlob(refined);
+  if (blob.size > PHOTO_MAX_BYTES) throw new Error('Cut-out photo exceeds the 5 MB limit');
+  return {
+    file: new File([blob], 'portrait-cutout.png', { type: 'image/png' }),
+    width: refined.width,
+    height: refined.height,
+    backgroundRemoved: true,
+  };
+}
+
+// Best-effort client-side final poster: background + portrait + badges +
+// name-tag banner + 3D metallic name text, all composited in the browser so
+// the server can skip its own PIL rendering for this request. Any failure
+// here (missing config, font, canvas support, name too long, ...) simply
+// means no `composed_poster` is attached, and the server renders normally.
+async function buildComposedPoster(clientCode, photoFile) {
+  const { loadImage, loadFont, composeFullCertificate } = await import('../utils/certificateCompositor');
+  const { data: config } = await axios.get(`${API_URL}/user/render-config/${encodeURIComponent(clientCode)}`);
+  if (!config?.success) throw new Error('Render config unavailable.');
+  const imageUrlBase = `${API_URL}/`;
+  if (!config.assets.background) throw new Error('Background asset unavailable.');
+
+  await loadFont(config.font.url, config.font.family);
+  const portraitUrl = URL.createObjectURL(photoFile);
   try {
-    const result = await new Promise((resolve, reject) => {
-      segmentation.onResults(resolve);
-      Promise.resolve(segmentation.send({ image: source })).catch(reject);
-    });
-    if (!result?.segmentationMask) throw new Error('No portrait mask returned');
-    const output = document.createElement('canvas');
-    output.width = size.width;
-    output.height = size.height;
-    const context = output.getContext('2d');
-    if (!context) throw new Error('Canvas unavailable');
-    context.drawImage(source, 0, 0);
-    context.globalCompositeOperation = 'destination-in';
-    context.drawImage(result.segmentationMask, 0, 0, size.width, size.height);
-    context.globalCompositeOperation = 'source-over';
-    const blob = await pngCanvasBlob(output);
-    if (blob.size > PHOTO_MAX_BYTES) throw new Error('Cut-out photo exceeds the 5 MB limit');
-    return {
-      file: new File([blob], 'portrait-cutout.png', { type: 'image/png' }),
-      width: size.width,
-      height: size.height,
-      backgroundRemoved: true,
-    };
+    const [backgroundImage, portraitImage] = await Promise.all([
+      loadImage(`${imageUrlBase}${config.assets.background}`),
+      loadImage(portraitUrl),
+    ]);
+    const canvas = await composeFullCertificate(config, backgroundImage, portraitImage, imageUrlBase);
+    return await pngCanvasBlob(canvas);
   } finally {
-    segmentation.close?.();
+    URL.revokeObjectURL(portraitUrl);
   }
 }
 
@@ -599,6 +718,20 @@ function UserPortalNew() {
     formData.append('client_code', clientCode.trim());
     formData.append('photo', selectedFile);
     if (clientBackgroundRemoved) formData.append('client_background_removed', '1');
+
+    // Only a browser-cut portrait (with real transparency) has the subject
+    // isolation this composite needs; other uploads keep the existing
+    // full server-side rendering path. jsdom (tests) has no canvas/font
+    // support, so this is skipped there exactly like background removal.
+    if (clientBackgroundRemoved && process.env.NODE_ENV !== 'test') {
+      try {
+        const posterBlob = await buildComposedPoster(clientCode.trim(), selectedFile);
+        formData.append('composed_poster', posterBlob, 'composed-poster.png');
+      } catch (compositeError) {
+        // No composed_poster attached; the server renders the certificate
+        // from scratch as it always has.
+      }
+    }
 
     try {
       const response = await axios.post(`${API_URL}/user/upload-photo`, formData, {

@@ -21,7 +21,8 @@ def install_security(app):
     public = {'health_check', 'auth_session', 'auth_login', 'user_check_system',
               'validate_client_code', 'user_upload_photo', 'user_preview_certificate',
               'user_download_certificate', 'user_get_editor', 'user_get_editor_layer',
-              'user_adjust_certificate', 'user_generation_job_status', 'serve_frontend'}
+              'user_adjust_certificate', 'user_generation_job_status', 'serve_frontend',
+              'user_render_config', 'user_asset'}
 
     def throttle(key, maximum, seconds):
         now = time.monotonic()
@@ -59,7 +60,7 @@ def install_security(app):
             abort(413, description='Photo upload exceeds the 5 MB limit.')
         if request.endpoint == 'auth_login':
             throttle(('login', request.remote_addr), 10, 900)
-        elif request.endpoint == 'validate_client_code':
+        elif request.endpoint in {'validate_client_code', 'user_render_config'}:
             throttle(('lookup', request.remote_addr), 60, 60)
         elif request.endpoint in {'user_upload_photo', 'user_adjust_certificate'}:
             throttle((request.endpoint, request.remote_addr), 20 if request.endpoint == 'user_adjust_certificate' else 10, 60)

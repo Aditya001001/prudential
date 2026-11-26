@@ -91,6 +91,12 @@ def pagination():
 REFERENCE_WIDTH = 1800
 REFERENCE_HEIGHT = 3184  # Actual background height
 
+# Client-provided "Avenir Black" font for the agent name text. Also exposed to
+# the browser (frontend/public/fonts/AvenirBlack.ttf, extracted from this same
+# .ttc face) so client-side name-text rendering can match the server exactly.
+AVENIR_FONT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fonts', 'Avenir.ttc')
+AVENIR_BLACK_INDEX = 2  # Index within the .ttc collection for "Avenir Black"
+
 # Positions as ratios of template size (will scale to actual background)
 # MAXIMUM SIZE - fill as much space as possible!
 POSITION_RATIOS = {
@@ -761,6 +767,68 @@ def user_check_system():
 
     return jsonify(ready=ready, message='System ready' if ready else 'Admin must upload assets and master data.')
 
+
+USER_ASSET_KINDS = {'background': ('background', ('MDRT', 'COT', 'TOT')),
+                    'layer': ('layer', ('MDRT', 'COT', 'TOT')),
+                    'nametag': ('nametag', ('MDRT', 'COT', 'TOT')),
+                    'badge': ('badge', ('LM', 'HR', 'QC'))}
+
+
+@app.route('/api/user/assets/<asset_type>/<name>', methods=['GET'])
+def user_asset(asset_type, name):
+    """Serve the fixed certificate assets (backgrounds/overlays/badges/name
+    tags) so the browser can replicate server-side compositing locally.
+    Read-only and limited to the known tier/badge codes - no path input is
+    ever used to build a filesystem path."""
+    entry = USER_ASSET_KINDS.get(asset_type)
+    if not entry:
+        abort(404)
+    kind, allowed = entry
+    code = Path(name).stem
+    if code not in allowed or name != code + '.png':
+        abort(404)
+    path = Path(asset_path(kind, code))
+    if not path.is_file():
+        abort(404)
+    response = send_file(path, mimetype='image/png')
+    response.headers['Cache-Control'] = 'public, max-age=3600'
+    return response
+
+
+@app.route('/api/user/render-config/<client_code>', methods=['GET'])
+def user_render_config(client_code):
+    """Everything the browser needs to composite badges, the name-tag
+    banner and the 3D metallic name text locally, without exposing any more
+    agent detail than the finished certificate already would."""
+    agent = get_agent_by_client_code(client_code.strip())
+    if not agent:
+        abort(404, description='Client code not found.')
+    tier = agent.mdrt_tier
+    badges = agent.get_badges()
+
+    def asset_url(kind, name):
+        path = Path(asset_path(kind, name))
+        if not path.is_file():
+            return None
+        # Relative to the frontend's API_URL base (e.g. "/prudential-api"),
+        # matching how every other endpoint in this payload is consumed.
+        return f'user/assets/{kind}/{name}.png'
+
+    return jsonify(
+        success=True,
+        agent={'name': agent.agent_name, 'tier': tier, 'badges': badges},
+        output_size=[REFERENCE_WIDTH, REFERENCE_HEIGHT],
+        layout=POSITION_RATIOS,
+        assets={
+            'background': asset_url('background', tier),
+            'layer': asset_url('layer', tier),
+            'nametag': asset_url('nametag', tier),
+            'badges': {code: asset_url('badge', code) for code in badges},
+        },
+        font={'url': '/fonts/AvenirBlack.ttf', 'family': 'Avenir Black'},
+    )
+
+
 @app.route('/api/user/upload-photo', methods=['POST'])
 def user_upload_photo():
     upload = request.files.get('photo')
@@ -781,6 +849,7 @@ def user_upload_photo():
         abort(429, description='You already have photos waiting to be processed. Please wait for them to finish.')
 
     photo_path = None
+    poster_filename = None
     job = None
     try:
         image = validated_photo(upload)
@@ -797,11 +866,34 @@ def user_upload_photo():
         suffix = 'cutout.png' if client_cutout else 'original.jpg'
         photo_path = safe_path(USER_PHOTOS_FOLDER, f'{identifier}_{suffix}')
         atomic_photo_save(image, photo_path, preserve_alpha=client_cutout)
+
+        # An optional browser-composited final poster (background + portrait +
+        # badges + name tag + 3D name text). Only trusted as an optimisation
+        # when it matches the certificate's fixed output dimensions exactly;
+        # otherwise the worker silently falls back to full server rendering.
+        poster_upload = request.files.get('composed_poster')
+        if poster_upload:
+            try:
+                poster_stream = poster_upload.stream
+                poster_stream.seek(0, os.SEEK_END)
+                poster_size = poster_stream.tell()
+                poster_stream.seek(0)
+                if poster_size > app.config['USER_POSTER_MAX_BYTES']:
+                    raise BadRequest('Composed poster exceeds the size limit.')
+                poster_image = validated_image(poster_upload)
+                if (poster_image.width, poster_image.height) == (REFERENCE_WIDTH, REFERENCE_HEIGHT):
+                    poster_path = safe_path(USER_PHOTOS_FOLDER, f'{identifier}_composed.png')
+                    atomic_image_save(poster_image.convert('RGBA'), poster_path)
+                    poster_filename = poster_path.name
+            except Exception:
+                app.logger.warning('Discarding invalid client-composed poster; falling back to server rendering.')
+
         job = GenerationJob(
             id=identifier, owner=owner, status='queued', agent_id=agent.id,
             client_code_snapshot=agent.client_code, agent_name_snapshot=agent.agent_name,
             tier_snapshot=agent.mdrt_tier, badges_snapshot=','.join(agent.get_badges()),
             photo_filename=photo_path.name, photo_size=photo_path.stat().st_size,
+            composed_poster_filename=poster_filename,
         )
         db.session.add(job)
         db.session.commit()
@@ -809,6 +901,8 @@ def user_upload_photo():
         db.session.rollback()
         if photo_path:
             photo_path.unlink(missing_ok=True)
+        if poster_filename:
+            safe_path(USER_PHOTOS_FOLDER, poster_filename).unlink(missing_ok=True)
         raise
 
     try:
@@ -897,7 +991,33 @@ def process_generation_job(generation_id):
         if not photo_path.is_file():
             raise BadRequest('The queued photo is no longer available. Please upload it again.')
         agent = GenerationAgentSnapshot(job)
-        filename, cert_path, metadata = generate_certificate_for_agent(agent, str(photo_path))
+
+        poster_path = safe_path(USER_PHOTOS_FOLDER, job.composed_poster_filename) if job.composed_poster_filename else None
+        poster_valid = False
+        if poster_path and poster_path.is_file():
+            with Image.open(poster_path) as source:
+                poster_valid = validate_composed_poster(source, agent.mdrt_tier, agent.get_badges())
+        if poster_path and poster_path.is_file() and poster_valid:
+            # The browser already rendered the final pixels (background,
+            # portrait, badges, name tag, 3D name text), and the cheap
+            # server-side check above confirmed the tier/badge/name-tag
+            # artwork matches this agent's record. Store them directly;
+            # there is no per-layer editor state for this fast path, so the
+            # certificate is not later repositionable, same as any other
+            # fallback-free render.
+            filename = f'{uuid4().hex}.png'
+            cert_path = str(Path(USER_OUTPUTS_FOLDER) / filename)
+            with Image.open(poster_path) as source:
+                atomic_image_save(source.convert('RGBA'), cert_path)
+            metadata = {'renderer_version': 6, 'client_composed': True, 'output_size': [REFERENCE_WIDTH, REFERENCE_HEIGHT]}
+            poster_path.unlink(missing_ok=True)
+        else:
+            if poster_path and poster_path.is_file():
+                # Validation mismatch: do not trust the client's pixels.
+                # Fall back to the authoritative full server-side render.
+                app.logger.warning('Composed poster failed validation for job %s; falling back to server rendering.', job.id)
+                poster_path.unlink(missing_ok=True)
+            filename, cert_path, metadata = generate_certificate_for_agent(agent, str(photo_path))
         output_path = safe_path(USER_OUTPUTS_FOLDER, filename)
         certificate = Certificate(
             agent_id=job.agent_id if db.session.get(Agent, job.agent_id) else None,
@@ -935,6 +1055,147 @@ def process_generation_job(generation_id):
         raise
     finally:
         db.session.remove()
+
+
+# --- Cheap server-side validation of client-composed posters (Option B) ---
+# The browser now does the full compositing, so the server must spot-check
+# that a submitted poster actually corresponds to the agent's real tier and
+# badges before trusting it, without paying for a full Pillow re-render. The
+# check compares a small downscaled raster of only the fixed, tier-dependent
+# artwork (background, tier overlay, badges, name-tag banner); the portrait
+# (user-controlled) and name text (font-rendering-sensitive) are masked out.
+POSTER_VALIDATION_SCALE = 0.1
+POSTER_VALIDATION_MAX_DIFF = 18  # Mean per-channel abs diff on a 0-255 scale.
+
+
+def build_validation_reference(tier, badges):
+    """Returns (reference_image, regions_of_interest). Each ROI is a
+    (x0, y0, x1, y1) box, in the reference's downscaled coordinates, that a
+    legitimate poster must match: the background/tier-overlay strip above the
+    portrait (always fully visible), every badge's exact box, and the
+    name-tag banner's box minus its own name-text sub-area. Comparing only
+    these precise boxes -- instead of "everything outside one big portrait
+    rectangle" -- keeps a small fabricated badge from being diluted into an
+    acceptable mean difference by a much larger masked area."""
+    width = max(1, round(REFERENCE_WIDTH * POSTER_VALIDATION_SCALE))
+    height = max(1, round(REFERENCE_HEIGHT * POSTER_VALIDATION_SCALE))
+    canvas = Image.new('RGBA', (width, height))
+    regions = []
+
+    bg_path = asset_path('background', tier)
+    if os.path.exists(bg_path):
+        with Image.open(bg_path) as source:
+            canvas.alpha_composite(source.convert('RGBA').resize((width, height), Image.Resampling.LANCZOS))
+
+    layer_path = asset_path('layer', tier)
+    if os.path.exists(layer_path):
+        with Image.open(layer_path) as source:
+            canvas.alpha_composite(source.convert('RGBA').resize((width, height), Image.Resampling.LANCZOS))
+
+    photo_ratios = POSITION_RATIOS['agent_photo']
+    photo_top = int(height * (1 - photo_ratios['height_ratio']))
+    if photo_top > 0:
+        regions.append((0, 0, width, photo_top))
+
+    badge_ratios = POSITION_RATIOS['badges']
+    badge_x = int(width * badge_ratios['x_ratio'])
+    badge_y_start = int(height * badge_ratios['y_ratio'])
+    badge_spacing = int(height * badge_ratios['spacing_ratio'])
+    badge_size = max(1, int(width * badge_ratios['size_ratio']))
+    for i, badge_code in enumerate(badges):
+        badge_path = asset_path('badge', badge_code)
+        badge_y = badge_y_start + i * badge_spacing
+        if os.path.exists(badge_path):
+            with Image.open(badge_path) as source:
+                badge_img = source.convert('RGBA').resize((badge_size, badge_size), Image.Resampling.LANCZOS)
+            canvas.alpha_composite(badge_img, (badge_x, badge_y))
+            regions.append((badge_x, badge_y, badge_x + badge_size, badge_y + badge_size))
+
+    nametag_path = asset_path('nametag', tier)
+    if os.path.exists(nametag_path):
+        with Image.open(nametag_path) as uploaded_nametag:
+            fitted = fit_nametag(uploaded_nametag, (width, height),
+                                 POSITION_RATIOS['name_tag']['width_ratio'], POSITION_RATIOS['name_tag']['y_ratio'])
+        if fitted is not None:
+            nametag_img, position, _ = fitted
+            canvas.alpha_composite(nametag_img, position)
+            nx, ny = position
+            regions.append((nx, ny, nx + nametag_img.width, ny + nametag_img.height))
+
+    return canvas.convert('RGB'), regions
+
+
+def validation_mask(width, height, regions):
+    """255 inside each ROI box; 0 everywhere else, and always 0 over the
+    font-rendering-sensitive name text so browser/server glyph differences
+    never trip validation."""
+    mask = Image.new('L', (width, height), 0)
+    draw = ImageDraw.Draw(mask)
+    for x0, y0, x1, y1 in regions:
+        draw.rectangle([x0, y0, x1 - 1, y1 - 1], fill=255)
+
+    name_ratios = POSITION_RATIOS['name_text']
+    name_half = int(height * name_ratios['font_size_ratio'])
+    name_center = int(height * name_ratios['y_ratio'])
+    draw.rectangle([0, max(0, name_center - name_half), width, min(height, name_center + name_half)], fill=0)
+
+    return mask
+
+
+def poster_has_unauthorized_badge(candidate, width, height, badges):
+    """Detects a fabricated badge: the badge slot immediately after the
+    agent's real badges (where a tampered client would stack an extra one)
+    closely resembling a badge the agent doesn't actually hold. This is
+    checked separately from `validation_mask`'s ROI diff because that slot is
+    *not* one of the agent's legitimate regions, so it is otherwise skipped
+    entirely rather than compared against anything."""
+    unauthorized = [code for code in ('LM', 'HR', 'QC') if code not in badges]
+    if not unauthorized:
+        return False
+    badge_ratios = POSITION_RATIOS['badges']
+    badge_x = int(width * badge_ratios['x_ratio'])
+    badge_size = max(1, int(width * badge_ratios['size_ratio']))
+    slot_y = int(height * badge_ratios['y_ratio']) + len(badges) * int(height * badge_ratios['spacing_ratio'])
+    if slot_y + badge_size > height:
+        return False
+    slot = candidate.crop((badge_x, slot_y, badge_x + badge_size, slot_y + badge_size))
+    import numpy as np
+    slot_array = np.asarray(slot, dtype=np.int16)
+    for code in unauthorized:
+        badge_path = asset_path('badge', code)
+        if not os.path.exists(badge_path):
+            continue
+        with Image.open(badge_path) as source:
+            badge_img = source.convert('RGB').resize((badge_size, badge_size), Image.Resampling.LANCZOS)
+        badge_array = np.asarray(badge_img, dtype=np.int16)
+        if float(np.abs(slot_array - badge_array).mean()) <= POSTER_VALIDATION_MAX_DIFF:
+            return True
+    return False
+
+
+def validate_composed_poster(poster_image, tier, badges):
+    """Returns True when `poster_image` matches a freshly built reference
+    raster closely enough, within the fixed tier/badge/name-tag regions, to
+    trust as-is. Any failure here (bad assets, decode errors, mismatch) is
+    treated as invalid so the caller falls back to the authoritative full
+    server-side render."""
+    try:
+        import numpy as np
+        reference, regions = build_validation_reference(tier, badges)
+        width, height = reference.size
+        candidate = poster_image.convert('RGB').resize((width, height), Image.Resampling.LANCZOS)
+        if poster_has_unauthorized_badge(candidate, width, height, badges):
+            return False
+        mask_array = np.asarray(validation_mask(width, height, regions), dtype=bool)
+        if not mask_array.any():
+            return True
+        ref_array = np.asarray(reference, dtype=np.int16)
+        cand_array = np.asarray(candidate, dtype=np.int16)
+        diff = np.abs(ref_array - cand_array)[mask_array]
+        return float(diff.mean()) <= POSTER_VALIDATION_MAX_DIFF
+    except Exception:
+        app.logger.exception('Composed poster validation failed; treating as invalid.')
+        return False
 
 
 def generate_certificate_for_agent(agent, photo_path):
@@ -1089,10 +1350,6 @@ def generate_certificate_for_agent(agent, photo_path):
     font_size = max_font_size
     font = None
     text_bbox = None
-
-    # Client-provided "Avenir Black" font for the agent name text
-    AVENIR_FONT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fonts', 'Avenir.ttc')
-    AVENIR_BLACK_INDEX = 2  # Index within the .ttc collection for "Avenir Black"
 
     display_name = agent_name.upper()
     for attempt in range(80):  # Fit the uppercase face and 3D decoration.

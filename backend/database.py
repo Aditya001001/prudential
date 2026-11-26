@@ -211,6 +211,11 @@ class GenerationJob(db.Model):
     badges_snapshot = db.Column(db.String(50), nullable=False, default='')
     photo_filename = db.Column(db.String(255), nullable=False)
     photo_size = db.Column(db.Integer, nullable=False)
+    # Optional browser-composited final poster (background + portrait + badges
+    # + name tag + 3D name text, all rendered client-side). When present and
+    # valid, the worker uses it directly instead of re-running the full PIL
+    # compositing pipeline, cutting server load under concurrent traffic.
+    composed_poster_filename = db.Column(db.String(255), nullable=True)
     rq_job_id = db.Column(db.String(64), unique=True, nullable=True)
     certificate_id = db.Column(db.Integer, db.ForeignKey('certificates.id', ondelete='SET NULL'), nullable=True)
     error = db.Column(db.String(500), nullable=True)

@@ -23,9 +23,11 @@ def configure(app):
         PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
         SESSION_REFRESH_EACH_REQUEST=False,
         MAX_CONTENT_LENGTH=50 * 1024 * 1024,
-        # Includes a small allowance for multipart form boundaries; the photo
-        # stream itself is checked against the exact 5 MiB limit in storage.py.
-        USER_PHOTO_MAX_REQUEST_BYTES=5 * 1024 * 1024 + 128 * 1024,
+        # Covers the 5 MiB photo (checked exactly in storage.py) plus an
+        # optional browser-composited final poster PNG (checked exactly
+        # against USER_POSTER_MAX_BYTES below) and multipart form overhead.
+        USER_PHOTO_MAX_REQUEST_BYTES=20 * 1024 * 1024,
+        USER_POSTER_MAX_BYTES=15 * 1024 * 1024,
         MAX_FORM_MEMORY_SIZE=512 * 1024,
         MAX_FORM_PARTS=20,
         REDIS_URL=os.environ.get('REDIS_URL', 'redis://127.0.0.1:6379/0'),

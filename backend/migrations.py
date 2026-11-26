@@ -10,7 +10,7 @@ import sqlite3
 from sqlalchemy.schema import CreateTable
 from database import db, Certificate, GenerationJob
 
-VERSION = 2
+VERSION = 3
 
 
 def upgrade():
@@ -57,6 +57,12 @@ def upgrade():
                     connection.execute(CreateTable(GenerationJob.__table__, if_not_exists=True))
                     connection.exec_driver_sql('CREATE INDEX IF NOT EXISTS ix_generation_jobs_status_created_at ON generation_jobs (status, created_at)')
                     connection.exec_driver_sql('INSERT INTO schema_migrations VALUES (?, ?)', (2, datetime.now().isoformat()))
+                poster_done = connection.exec_driver_sql('SELECT version FROM schema_migrations WHERE version=3').first()
+                if not poster_done:
+                    columns = {r[1] for r in connection.exec_driver_sql('PRAGMA table_info(generation_jobs)')}
+                    if 'composed_poster_filename' not in columns:
+                        connection.exec_driver_sql('ALTER TABLE generation_jobs ADD COLUMN composed_poster_filename VARCHAR(255)')
+                    connection.exec_driver_sql('INSERT INTO schema_migrations VALUES (?, ?)', (3, datetime.now().isoformat()))
         finally:
             connection.exec_driver_sql('PRAGMA foreign_keys=ON')
             connection.commit()
