@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, send_file, send_from_directory, session, abort
 import os
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 from pathlib import Path
 from uuid import uuid4
 from threading import BoundedSemaphore, Lock
