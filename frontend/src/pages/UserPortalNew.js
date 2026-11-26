@@ -501,10 +501,14 @@ function UserPortalNew() {
               message: `已在此裝置移除背景並調整照片：${width.toLocaleString()} × ${height.toLocaleString()} 像素（${megapixels.toFixed(2)} 百萬像素）→ ${cutout.width.toLocaleString()} × ${cutout.height.toLocaleString()} 像素；實際上傳 ${(cutout.file.size / 1024 / 1024).toFixed(2)} MB。`,
             });
             setStep(3);
-          }).catch(() => {
+          }).catch((removalError) => {
             // The browser model is an optimisation. Preserve a reliable path
             // for older or low-memory phones; the server will remove the
-            // background for this explicitly unprocessed upload.
+            // background for this explicitly unprocessed upload. Logged so
+            // this fallback is visible in the browser console instead of
+            // being silently invisible.
+            // eslint-disable-next-line no-console
+            console.warn('Client-side background removal failed; falling back to server rendering.', removalError);
             if (request !== photoRequestRef.current) return;
             const previewUrl = normalized.processed ? URL.createObjectURL(normalized.file) : url;
             if (normalized.processed) URL.revokeObjectURL(url);
