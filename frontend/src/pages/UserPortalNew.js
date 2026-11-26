@@ -180,8 +180,12 @@ async function removeBackgroundInBrowser(image, width, height) {
   sourceContext.drawImage(image, 0, 0, size.width, size.height);
 
   const sourceBlob = await pngCanvasBlob(source);
+  // publicPath is used internally as the base for `new URL(relative, publicPath)`,
+  // which throws "Invalid base URL" unless the base is an absolute URL -- a
+  // path like "/prudential/bgremoval/" is not enough on its own.
+  const publicPath = new URL(`${process.env.PUBLIC_URL || ''}/bgremoval/`, window.location.origin).toString();
   const cutoutBlob = await removeBackground(sourceBlob, {
-    publicPath: `${process.env.PUBLIC_URL || ''}/bgremoval/`,
+    publicPath,
     model: 'isnet_fp16',
     output: { format: 'image/png', quality: 1 },
   });
