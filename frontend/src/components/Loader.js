@@ -26,7 +26,7 @@ const Loader = ({ job, message, estimatedTime }) => {
   }, []);
 
   const queued = job?.status === 'queued';
-  const estimate = Math.max(1, job?.estimated_wait_seconds || estimatedTime || 15);
+  const estimate = Math.max(1, job?.estimated_wait_seconds || estimatedTime || 60);
   const queuePosition = job?.queue_position || 1;
   // Do not pretend a waiting job is rendering.  Once a worker starts it, the
   // normal elapsed rendering indicator resumes.
@@ -78,9 +78,9 @@ const Loader = ({ job, message, estimatedTime }) => {
 
           <div className="loader-steps">
             <div className={`step-dot ${!queued && elapsed >= 1 ? 'active' : ''}`}></div>
-            <div className={`step-dot ${!queued && elapsed >= 5 ? 'active' : ''}`}></div>
-            <div className={`step-dot ${!queued && elapsed >= 10 ? 'active' : ''}`}></div>
             <div className={`step-dot ${!queued && elapsed >= 15 ? 'active' : ''}`}></div>
+            <div className={`step-dot ${!queued && elapsed >= 30 ? 'active' : ''}`}></div>
+            <div className={`step-dot ${!queued && elapsed >= 45 ? 'active' : ''}`}></div>
           </div>
         </div>
       </div>

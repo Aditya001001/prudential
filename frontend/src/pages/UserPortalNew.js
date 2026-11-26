@@ -256,6 +256,10 @@ function UserPortalNew() {
   const streamRef = React.useRef(null);
   const fileInputRef = React.useRef(null);
   const pendingPhotoRef = React.useRef(null);
+  // Background removal is deferred until the photo is confirmed in step 3
+  // (rather than running immediately on selection), so this holds the
+  // decoded <img> plus dimensions needed to run it at confirm time.
+  const photoForRemovalRef = React.useRef(null);
   const photoRequestRef = React.useRef(0);
   const cameraRequestRef = React.useRef(0);
   const [readingPhoto, setReadingPhoto] = useState(false);
@@ -431,6 +435,7 @@ function UserPortalNew() {
       pending.image.src = '';
       pendingPhotoRef.current = null;
     }
+    photoForRemovalRef.current = null;
   };
 
   // Reuse the file itself for previews, avoiding large duplicate base64 strings on phones.
@@ -476,58 +481,21 @@ function UserPortalNew() {
         }
         const acceptNormalizedPhoto = normalized => {
           if (request !== photoRequestRef.current) return;
-          // jsdom has no canvas/WebAssembly implementation. Keep the browser
-          // behaviour testable; production devices always take the local
-          // segmentation path below.
-          if (process.env.NODE_ENV === 'test') {
-            const previewUrl = normalized.processed ? URL.createObjectURL(normalized.file) : url;
-            if (normalized.processed) URL.revokeObjectURL(url);
-            pendingPhotoRef.current = null;
-            setReadingPhoto(false);
-            setSelectedFile(normalized.file);
-            setClientBackgroundRemoved(false);
-            setPreviewImage(previewUrl);
-            setStep(3);
-            return;
-          }
-          setResolutionWarning({ level: 'warning', message: '正在此裝置移除照片背景，首次使用時可能需要下載處理模型，請勿關閉此頁面。' });
-          removeBackgroundInBrowser(image, normalized.width, normalized.height).then(cutout => {
-            if (request !== photoRequestRef.current) return;
-            URL.revokeObjectURL(url);
-            pendingPhotoRef.current = null;
-            setReadingPhoto(false);
-            setSelectedFile(cutout.file);
-            setClientBackgroundRemoved(true);
-            setPreviewImage(URL.createObjectURL(cutout.file));
-            const megapixels = (width * height) / 1_000_000;
-            setResolutionWarning({
-              level: 'success',
-              message: `已在此裝置移除背景並調整照片：${width.toLocaleString()} × ${height.toLocaleString()} 像素（${megapixels.toFixed(2)} 百萬像素）→ ${cutout.width.toLocaleString()} × ${cutout.height.toLocaleString()} 像素；實際上傳 ${(cutout.file.size / 1024 / 1024).toFixed(2)} MB。`,
-            });
-            setStep(3);
-          }).catch((removalError) => {
-            // The browser model is an optimisation. Preserve a reliable path
-            // for older or low-memory phones; the server will remove the
-            // background for this explicitly unprocessed upload. Logged so
-            // this fallback is visible in the browser console instead of
-            // being silently invisible.
-            // eslint-disable-next-line no-console
-            console.warn('Client-side background removal failed; falling back to server rendering.', removalError);
-            if (request !== photoRequestRef.current) return;
-            const previewUrl = normalized.processed ? URL.createObjectURL(normalized.file) : url;
-            if (normalized.processed) URL.revokeObjectURL(url);
-            pendingPhotoRef.current = null;
-            setReadingPhoto(false);
-            setSelectedFile(normalized.file);
-            setClientBackgroundRemoved(false);
-            setPreviewImage(previewUrl);
-            const megapixels = (width * height) / 1_000_000;
-            setResolutionWarning({
-              level: 'warning',
-              message: `此裝置未能完成背景移除，已保留照片並會由伺服器處理。照片：${width.toLocaleString()} × ${height.toLocaleString()} 像素（${megapixels.toFixed(2)} 百萬像素）。`,
-            });
-            setStep(3);
-          });
+          const previewUrl = normalized.processed ? URL.createObjectURL(normalized.file) : url;
+          if (normalized.processed) URL.revokeObjectURL(url);
+          pendingPhotoRef.current = null;
+          setReadingPhoto(false);
+          setSelectedFile(normalized.file);
+          setClientBackgroundRemoved(false);
+          setPreviewImage(previewUrl);
+          // Background removal is slow (first use may download the model),
+          // so defer it until the user confirms this photo in step 3 instead
+          // of running it immediately on selection. jsdom has no canvas/
+          // WebAssembly implementation, so tests skip this entirely.
+          photoForRemovalRef.current = process.env.NODE_ENV === 'test'
+            ? null
+            : { image, width, height };
+          setStep(3);
         };
         const rejectNormalization = () => {
           if (request !== photoRequestRef.current) return;
@@ -722,18 +690,56 @@ function UserPortalNew() {
     setError(null);
     setResult(null);
 
+    // Background removal is deferred until now (photo confirmation) rather
+    // than running immediately on selection, so the Loader overlay (shown
+    // for the whole duration of `uploading`) covers it instead of making
+    // the user wait silently on the confirmation screen.
+    let fileToUpload = selectedFile;
+    let backgroundRemoved = clientBackgroundRemoved;
+    const pendingRemoval = photoForRemovalRef.current;
+    photoForRemovalRef.current = null;
+    if (pendingRemoval) {
+      setResolutionWarning({ level: 'warning', message: '正在此裝置移除照片背景，首次使用時可能需要下載處理模型，請勿關閉此頁面。' });
+      try {
+        const cutout = await removeBackgroundInBrowser(pendingRemoval.image, pendingRemoval.width, pendingRemoval.height);
+        fileToUpload = cutout.file;
+        backgroundRemoved = true;
+        setSelectedFile(cutout.file);
+        setClientBackgroundRemoved(true);
+        setPreviewImage(URL.createObjectURL(cutout.file));
+        const megapixels = (pendingRemoval.width * pendingRemoval.height) / 1_000_000;
+        setResolutionWarning({
+          level: 'success',
+          message: `已在此裝置移除背景並調整照片：${pendingRemoval.width.toLocaleString()} × ${pendingRemoval.height.toLocaleString()} 像素（${megapixels.toFixed(2)} 百萬像素）→ ${cutout.width.toLocaleString()} × ${cutout.height.toLocaleString()} 像素；實際上傳 ${(cutout.file.size / 1024 / 1024).toFixed(2)} MB。`,
+        });
+      } catch (removalError) {
+        // The browser model is an optimisation. Preserve a reliable path
+        // for older or low-memory phones; the server will remove the
+        // background for this explicitly unprocessed upload. Logged so
+        // this fallback is visible in the browser console instead of
+        // being silently invisible.
+        // eslint-disable-next-line no-console
+        console.warn('Client-side background removal failed; falling back to server rendering.', removalError);
+        const megapixels = (pendingRemoval.width * pendingRemoval.height) / 1_000_000;
+        setResolutionWarning({
+          level: 'warning',
+          message: `此裝置未能完成背景移除，已保留照片並會由伺服器處理。照片：${pendingRemoval.width.toLocaleString()} × ${pendingRemoval.height.toLocaleString()} 像素（${megapixels.toFixed(2)} 百萬像素）。`,
+        });
+      }
+    }
+
     const formData = new FormData();
     formData.append('client_code', clientCode.trim());
-    formData.append('photo', selectedFile);
-    if (clientBackgroundRemoved) formData.append('client_background_removed', '1');
+    formData.append('photo', fileToUpload);
+    if (backgroundRemoved) formData.append('client_background_removed', '1');
 
     // Only a browser-cut portrait (with real transparency) has the subject
     // isolation this composite needs; other uploads keep the existing
     // full server-side rendering path. jsdom (tests) has no canvas/font
     // support, so this is skipped there exactly like background removal.
-    if (clientBackgroundRemoved && process.env.NODE_ENV !== 'test') {
+    if (backgroundRemoved && process.env.NODE_ENV !== 'test') {
       try {
-        const posterBlob = await buildComposedPoster(clientCode.trim(), selectedFile);
+        const posterBlob = await buildComposedPoster(clientCode.trim(), fileToUpload);
         formData.append('composed_poster', posterBlob, 'composed-poster.png');
       } catch (compositeError) {
         // No composed_poster attached; the server renders the certificate
