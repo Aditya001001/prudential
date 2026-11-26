@@ -729,7 +729,11 @@ function UserPortalNew() {
         formData.append('composed_poster', posterBlob, 'composed-poster.png');
       } catch (compositeError) {
         // No composed_poster attached; the server renders the certificate
-        // from scratch as it always has.
+        // from scratch as it always has. Logged (not surfaced to the
+        // visitor) so this fallback is visible in the browser console
+        // instead of being silently invisible.
+        // eslint-disable-next-line no-console
+        console.warn('Client-side poster composite failed; falling back to server rendering.', compositeError);
       }
     }
 
